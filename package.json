@@ -17,8 +17,7 @@
   },
   "scripts": {
     "start": "node --import tsx src/index.ts",
-    "dev": "node --import tsx src/index.ts",
-    "build": "echo \"No build step needed\""
+    "dev": "node --import tsx src/index.ts"
   },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",
