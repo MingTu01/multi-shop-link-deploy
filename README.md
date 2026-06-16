@@ -8,14 +8,14 @@
 
 ### Docker 部署（推荐）
 ```bash
-git clone https://github.com/MingTu01/multi-shop-link-deploy.git
+git clone https://ghfast.top/https://github.com/MingTu01/multi-shop-link-deploy.git
 cd multi-shop-link-deploy
 docker-compose up -d
 ```
 
 ### 直接部署
 ```bash
-git clone https://github.com/MingTu01/multi-shop-link-deploy.git
+git clone https://ghfast.top/https://github.com/MingTu01/multi-shop-link-deploy.git
 cd multi-shop-link-deploy
 npm install
 node --import tsx src/index.ts
