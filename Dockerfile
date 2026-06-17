@@ -10,6 +10,9 @@ RUN apt-get update && \
 # Copy package files first (for layer caching)
 COPY package.json package-lock.json* ./
 
+# Use China npm mirror for faster install
+RUN npm config set registry https://registry.npmmirror.com
+
 # Install dependencies
 RUN npm install --omit=dev && npm cache clean --force
 

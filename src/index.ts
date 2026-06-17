@@ -79,11 +79,12 @@ app.use(express.json({ limit: jsonLimit }));
 const POSSIBLE_WEB_DIST = [
   join(BASE_DIR, 'public', 'web-dist'),
   join(BASE_DIR, '..', 'public', 'web-dist'),
+  join(BASE_DIR, '..', 'apps', 'server', 'public', 'web-dist'),
+  join(BASE_DIR, 'web', 'dist'),
   join(BASE_DIR, '..', 'web', 'dist'),
   join(BASE_DIR, '..', '..', 'web', 'dist'),
   join(BASE_DIR, '..', '..', 'apps', 'web', 'dist'),
-  join(BASE_DIR, 'web', 'dist'),
-  join(BASE_DIR, '..', 'apps', 'web', 'dist'),
+  join('/app', 'public', 'web-dist'),
   join('/app', 'apps', 'web', 'dist'),
 ];
 const WEB_DIST_PATH = POSSIBLE_WEB_DIST.find(p => existsSync(join(p, 'index.html'))) || POSSIBLE_WEB_DIST[0];
