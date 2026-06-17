@@ -77,6 +77,7 @@ app.use(express.json({ limit: jsonLimit }));
 
 // Smart path detection for web dist
 const POSSIBLE_WEB_DIST = [
+  join(BASE_DIR, 'public', 'web-dist'),
   join(BASE_DIR, '..', 'public', 'web-dist'),
   join(BASE_DIR, '..', 'web', 'dist'),
   join(BASE_DIR, '..', '..', 'web', 'dist'),
