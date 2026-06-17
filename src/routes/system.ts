@@ -26,7 +26,18 @@ function broadcastProgress(event: string, data: any) {
   const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const client of sseClients) {
     try { client.write(msg); } catch { sseClients.delete(client); }
-  }
+
+
+// SSE endpoint for upgrade progress streaming
+router.get('/upgrade-progress', (req: AuthRequest, res: Response) => {
+  if (!['admin', 'ADMIN'].includes(req.user.role)) return res.status(403).json({ error: '无权限' });
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  sseClients.add(res);
+  req.on('close', () => { sseClients.delete(res); });
+});  }
 }
 
 // S30: 系统信息 — 仅 ADMIN
@@ -514,8 +525,8 @@ router.post('/do-update', async (req: AuthRequest, res: Response) => {
         broadcastProgress('complete', { message: '更新完成，服务即将重启...' });
         
         setTimeout(() => {
-          console.log('[Update] Sending SIGTERM for restart...');
-          process.kill(process.pid, 'SIGTERM');
+          console.log('[Update] Restarting via process.exit...');
+          process.exit(0);
         }, 2000);
         
       } catch (err: any) {
