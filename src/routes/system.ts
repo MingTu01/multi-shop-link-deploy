@@ -470,7 +470,7 @@ router.post('/do-update', async (req: AuthRequest, res: Response) => {
         preZip.addLocalFile(join(BASE_DIR, 'data', 'store.db'), '', 'store.db');
         if (existsSync(join(BASE_DIR, 'data', 'store.db-wal'))) preZip.addLocalFile(join(BASE_DIR, 'data', 'store.db-wal'), '', 'store.db-wal');
         if (existsSync(join(BASE_DIR, 'data', 'store.db-shm'))) preZip.addLocalFile(join(BASE_DIR, 'data', 'store.db-shm'), '', 'store.db-shm');
-        preZip.writeZip(join(backupDir, 'pre-update-' + now + '.zip'));
+        preZip.writeZip(join(backupDir, 'pre-upgrade-' + now + '.zip'));
         console.log('[Update] Backup zip created');
         broadcastProgress('progress', { step: 1, total: 4, message: '数据库备份完成', done: true });
         } catch (backupErr) { console.error('[Update] Backup error:', backupErr.message); }
