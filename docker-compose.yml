@@ -1,14 +1,17 @@
 services:
-  multi-shop-link:
+  app:
     build: .
     container_name: multi-shop-link
-    restart: unless-stopped
     ports:
       - "3001:3001"
     volumes:
       - ./data:/app/data
       - ./uploads:/app/uploads
       - ./backups:/app/backups
+      - ./public/web-dist:/app/public/web-dist
     environment:
       - NODE_ENV=production
-      - TZ=Asia/Shanghai
+      - PORT=3001
+      # 生产环境请在 .env 文件中设置 JWT_SECRET
+      - JWT_SECRET=${JWT_SECRET:-please-change-this-secret}
+    restart: unless-stopped

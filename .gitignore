@@ -1,7 +1,66 @@
+# Dependencies
 node_modules/
-data/*.db
-data/*.db-wal
-data/*.db-shm
-uploads/
-backups/
+
+# Build output
+dist/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Logs
+*.log
+
+# Archives
 *.zip
+
+# Server data (preserved on server, not in git)
+apps/server/uploads/
+apps/server/backups/
+apps/server/data/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.tsbuildinfo
+
+# Temp files
+screenshots/
+scripts/
+_check_*/
+stdout.txt
+stderr.txt
+_fulltest.js
+test-browser.js
+test-*.js
+test-*.png
+temp_*.txt
+_check_*.js
+_seed_*.js
+_restore.js
+_restart.js
+
+# Screenshots
+ScreenShot_*.png
+
+# Tesseract models
+*.traineddata
+
+# Generated files
+apps/server/data/_restore.js
+apps/server/data/auto-backup.json
+apps/server/data/notification-settings.json
+apps/server/data/jwt-secret
+
+# Lock files
+package-lock.json
+
+# Staging
+_staging*/

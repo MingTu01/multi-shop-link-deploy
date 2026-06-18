@@ -2,33 +2,37 @@ FROM node:20-bookworm-slim
 
 WORKDIR /app
 
-# Install build tools for native modules (better-sqlite3)
+# Install build tools for native modules
 RUN apt-get update && \
     apt-get install -y python3 make g++ --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy package files first (for layer caching)
-COPY package.json package-lock.json* ./
+# Copy and install dependencies
+COPY apps/server/package.json ./
+RUN npm install && npm cache clean --force
 
-# Use China npm mirror for faster install
-RUN npm config set registry https://registry.npmmirror.com
-
-# Install dependencies
-RUN npm install --omit=dev && npm cache clean --force
-
-# Remove build tools to reduce image size
+# Remove build tools
 RUN apt-get purge -y python3 make g++ && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
-# Copy application
-COPY . .
+# Copy server source
+COPY apps/server/src ./src/
+COPY apps/server/tsconfig.json ./
 
-# Create data directories
-RUN mkdir -p data uploads backups public/reports public/web-dist
+# Copy frontend build to /app/public/web-dist
+COPY apps/server/public ./public/
 
-# Set timezone
-ENV TZ=Asia/Shanghai
+# Also symlink to /public/web-dist for path resolution
+RUN mkdir -p /public && ln -s /app/public/web-dist /public/web-dist
+
+# Create persistent directories
+RUN mkdir -p data uploads backups
+
 ENV NODE_ENV=production
+ENV PORT=3001
 
 EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:3001/api/health || exit 1
 
 CMD ["node", "--import", "tsx", "src/index.ts"]
