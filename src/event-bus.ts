@@ -37,6 +37,19 @@ class EventBus {
     }
     dead.forEach(id => this.clients.delete(id));
   }
+  /** Broadcast a system event to all connected clients */
+  broadcastSystem(action: string, data?: any) {
+    const message = JSON.stringify({ type: 'system', action, data });
+    const dead: string[] = [];
+    for (const [id, client] of this.clients) {
+      try {
+        client.res.write('event: system\ndata: ' + message + '\n\n');
+      } catch {
+        dead.push(id);
+      }
+    }
+    dead.forEach(id => this.clients.delete(id));
+  }
 }
 
 export const eventBus = new EventBus();
