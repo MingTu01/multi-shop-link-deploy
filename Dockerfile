@@ -11,8 +11,7 @@ RUN apt-get update && \
 COPY apps/server/package.json ./
 RUN npm install && npm cache clean --force
 
-# Remove build tools
-RUN apt-get purge -y python3 make g++ && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+# Keep build tools for runtime npm install via entrypoint.sh
 
 # Copy server source
 COPY apps/server/src ./src/
@@ -27,6 +26,13 @@ RUN mkdir -p /public && ln -s /app/public/web-dist /public/web-dist
 # Create persistent directories
 RUN mkdir -p data uploads backups
 
+# Copy startup script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Set timezone
+ENV TZ=Asia/Shanghai
+
 ENV NODE_ENV=production
 ENV PORT=3001
 
@@ -35,4 +41,4 @@ EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -f http://localhost:3001/api/health || exit 1
 
-CMD ["node", "--import", "tsx", "src/index.ts"]
+ENTRYPOINT ["/entrypoint.sh"]
