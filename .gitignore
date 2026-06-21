@@ -64,3 +64,6 @@ package-lock.json
 
 # Staging
 _staging*/
+
+data/aliyun-credentials.json
+data/.npm_install_stamp
