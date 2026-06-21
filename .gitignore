@@ -1,3 +1,6 @@
+# Legacy dual-structure (removed)
+apps/
+
 # Dependencies
 node_modules/
 

@@ -2,23 +2,23 @@ FROM node:20-bookworm-slim
 
 WORKDIR /app
 
-# Install build tools for native modules
+# Install build tools for native modules (better-sqlite3)
 RUN apt-get update && \
     apt-get install -y python3 make g++ --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy and install dependencies
-COPY apps/server/package.json ./
-RUN npm install && npm cache clean --force
+COPY package.json ./
+RUN npm install --omit=dev && npm cache clean --force
 
 # Keep build tools for runtime npm install via entrypoint.sh
 
 # Copy server source
-COPY apps/server/src ./src/
-COPY apps/server/tsconfig.json ./
+COPY src ./src/
+COPY tsconfig.json ./
 
 # Copy frontend build to /app/public/web-dist
-COPY apps/server/public ./public/
+COPY public ./public/
 
 # Also symlink to /public/web-dist for path resolution
 RUN mkdir -p /public && ln -s /app/public/web-dist /public/web-dist
