@@ -23,6 +23,7 @@ import logsRouter from './routes/logs.js';
 import reportsRouter from './routes/reports.js';
 import dashboardRouter from './routes/dashboard.js';
 import healthCertRouter from './routes/health-cert.js';
+import purchaseRouter from './routes/purchase.js';
 import uploadRouter from './routes/upload.js';
 import { startHealthCheckScheduler } from './health-check-scheduler.js';
 import { requireStoreAccess } from './middleware/store-access.js';
@@ -40,32 +41,13 @@ const app = express();
 app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 
-// S7: CORS 可配置，默认 * 向后兼容
-// S7: CORS 配置，支持环境变量或动态 Origin 回退（不使用通配符）
+// S7: CORS 配置
+// 未设置 CORS_ORIGIN 时默认允许所有来源
 const corsOrigin = process.env.CORS_ORIGIN || '';
 const corsOptions: cors.CorsOptions = {
   origin: corsOrigin
     ? corsOrigin.split(',').map(s => s.trim())
-    : (origin, callback) => {
-        // Allow no-origin requests (mobile, Postman)
-        if (!origin) {
-          callback(null, true);
-        } else {
-          try {
-            const originUrl = new URL(origin);
-            const port = process.env.PORT || 3001;
-            // Allow same-origin requests
-            if (originUrl.port === String(port) && (originUrl.hostname === 'localhost' || originUrl.hostname === '127.0.0.1')) {
-              callback(null, true);
-            } else {
-              console.warn('[CORS] Blocked:', origin, '(set CORS_ORIGIN env to allow)');
-              callback(new Error('CORS not allowed'));
-            }
-          } catch {
-            callback(new Error('CORS not allowed'));
-          }
-        }
-      },
+    : true,
   credentials: true
 };
 app.use(compression({ level: 6, threshold: 1024 }));
@@ -181,6 +163,7 @@ app.use('/api/reports', authMiddleware, reportsRouter);
 app.use('/api/dashboard', authMiddleware, dashboardRouter);
 startHealthCheckScheduler();
 app.use('/api/health-cert', authMiddleware, healthCertRouter);
+app.use('/api/stores/:storeId/purchase', authMiddleware, requireStoreAccess, purchaseRouter);
 app.use('/api/upload', authMiddleware, uploadRouter);
 
 // Auto backup scheduler
