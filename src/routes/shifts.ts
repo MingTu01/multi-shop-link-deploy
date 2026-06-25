@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import db from '../db.js';
 import { AuthRequest } from '../auth.js';
 import { opLog } from '../oplog.js';
+import { isManagerOrAbove } from '../lib/roles.js';
 import { triggerNotification } from '../notify-trigger.js';
 
 const router = Router({ mergeParams: true });
@@ -12,7 +13,7 @@ router.get('/', (req: AuthRequest, res: Response) => {
     const storeId = req.params.storeId;
     const { page, pageSize, type } = req.query;
     const p = parseInt(page as string) || 1;
-    const ps = parseInt(pageSize as string) || 20;
+    const ps = Math.min(parseInt(pageSize as string) || 20, 100);
     const offset = (p - 1) * ps;
 
     let condition = 'store_id = ?';
@@ -63,6 +64,7 @@ router.get('/:shiftId', (req: AuthRequest, res: Response) => {
 // POST /
 router.post('/', (req: AuthRequest, res: Response) => {
   try {
+    if (!isManagerOrAbove(req.user.role)) return res.status(403).json({ error: '无权限' });
     const storeId = req.params.storeId;
     const { type, photos, note, handover_content } = req.body;
     if (!type || !['open', 'close'].includes(type)) {
@@ -95,6 +97,7 @@ router.post('/', (req: AuthRequest, res: Response) => {
 router.post('/open', (req: AuthRequest, res: Response) => {
   req.body.type = 'open';
   try {
+    if (!isManagerOrAbove(req.user.role)) return res.status(403).json({ error: '无权限' });
     const storeId = req.params.storeId;
     const { photos, note, handover_content } = req.body;
     const photosStr = JSON.stringify(photos || []);
@@ -116,6 +119,7 @@ router.post('/open', (req: AuthRequest, res: Response) => {
 // POST /close
 router.post('/close', (req: AuthRequest, res: Response) => {
   try {
+    if (!isManagerOrAbove(req.user.role)) return res.status(403).json({ error: '无权限' });
     const storeId = req.params.storeId;
     const { photos, note, handover_content } = req.body;
     const photosStr = JSON.stringify(photos || []);

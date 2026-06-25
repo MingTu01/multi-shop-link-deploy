@@ -2,7 +2,7 @@ import { Router, Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
 import db from '../db.js';
-import { signToken, authMiddleware, AuthRequest } from '../auth.js';
+import { signToken, authMiddleware, AuthRequest, setAuthCookie, clearAuthCookie } from '../auth.js';
 import { opLog } from '../oplog.js';
 
 const router = Router();
@@ -12,7 +12,7 @@ const loginLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 5,
   message: { error: '登录尝试过于频繁，请1分钟后再试' },
-  standardHeaders: true,
+  standardHeaders: false,
   legacyHeaders: false,
 });
 
@@ -20,17 +20,27 @@ const loginLimiter = rateLimit({
 router.post('/login', loginLimiter, (req, res) => {
   try {
     const { username, password } = req.body;
+    if (typeof username !== 'string' || typeof password !== 'string') {
+      return res.status(400).json({ error: '请输入用户名和密码' });
+    }
     if (!username || !password) return res.status(400).json({ error: '请输入用户名和密码' });
     const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as any;
     if (!user) return res.status(401).json({ error: '用户名或密码错误' });
     if (user.status !== 'active') return res.status(403).json({ error: '账号已被禁用' });
     if (!bcrypt.compareSync(password, user.password_hash)) return res.status(401).json({ error: '用户名或密码错误' });
-    const token = signToken({ id: user.id, username: user.username, name: user.name, role: user.role, store_id: user.store_id });
+    const token = signToken({ id: user.id, role: user.role, store_id: user.store_id });
     const { password_hash, ...userData } = user;
-    res.json({ token, user: userData });
+    setAuthCookie(res, token);
+    res.json({ user: userData });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
+
+// 登出：清除 httpOnly cookie
+router.post('/logout', authMiddleware, (req, res) => {
+  clearAuthCookie(res);
+  res.json({ message: '已登出' });
+});
 router.get('/me', authMiddleware, (req: AuthRequest, res: Response) => {
   try {
     const user = db.prepare('SELECT id, username, name, phone, role, store_id, avatar, salary, status, job_title, address, created_at, updated_at FROM users WHERE id = ?').get(req.user.id) as any;
@@ -47,6 +57,11 @@ router.put('/me', authMiddleware, (req: AuthRequest, res: Response) => {
     if (!user) return res.status(404).json({ error: '用户不存在' });
     const updates: string[] = [];
     const vals: any[] = [];
+    // 只有管理员才能修改用户名（防止普通用户冒充股东）
+    if (username !== undefined && username !== user.username && user.role !== 'ADMIN') {
+      return res.status(403).json({ error: '无权修改用户名' });
+    }
+
     if (username !== undefined && username !== user.username) {
       const exists = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(username, req.user.id);
       if (exists) return res.status(400).json({ error: '账号已存在' });
