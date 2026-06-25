@@ -3,6 +3,7 @@
   "name": "multi-shop-link",
   "version": "1.2.3",
   "dependencies": {
+    "web-push": "^3.6.7",
     "adm-zip": "^0.5.17",
     "bcryptjs": "^3.0.3",
     "better-sqlite3": "^12.10.0",

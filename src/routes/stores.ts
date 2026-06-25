@@ -1,9 +1,9 @@
-import { localDate, localDateTime } from '../lib/utils.js';
+﻿import { localDate, localDateTime } from '../lib/utils.js';
 import { Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import db from '../db.js';
 import { AuthRequest } from '../auth.js';
-import { isAdmin, isStoreAdmin, isManagerOrAbove } from '../lib/roles.js';
+import { isAdmin, isStoreAdmin, isManagerOrAbove, entryFilterClause } from '../lib/roles.js';
 import { opLog } from '../oplog.js';
 import { triggerNotification } from '../notify-trigger.js';
 import { sendStoreNotification } from '../notify.js';
@@ -70,12 +70,15 @@ router.post('/', (req: AuthRequest, res: Response) => {
     if (!name) return res.status(400).json({ error: '请输入门店名称' });
     const storeId = id || 'store_' + Date.now();
     const photos = JSON.stringify(req.body.photos || []);
-    db.prepare('INSERT INTO stores (id, name, address, initial_capital, photos) VALUES (?,?,?,?,?)').run(storeId, name, address || '', initial_capital || 0, photos);
-    const shBody = req.body.shareholders;
-    if (Array.isArray(shBody) && shBody.length > 0) {
-      const stmt = db.prepare('INSERT INTO shareholders (store_id, name, phone, ratio) VALUES (?,?,?,?)');
-      for (const sh of shBody) { stmt.run(storeId, sh.name || '', sh.phone || '', sh.ratio || 0); }
-    }
+    const tx = db.transaction(() => {
+      db.prepare('INSERT INTO stores (id, name, address, initial_capital, photos) VALUES (?,?,?,?,?)').run(storeId, name, address || '', initial_capital || 0, photos);
+      const shBody = req.body.shareholders;
+      if (Array.isArray(shBody) && shBody.length > 0) {
+        const stmt = db.prepare('INSERT INTO shareholders (store_id, name, phone, ratio) VALUES (?,?,?,?)');
+        for (const sh of shBody) { stmt.run(storeId, sh.name || '', sh.phone || '', sh.ratio || 0); }
+      }
+    });
+    tx();
     opLog(req.user.id, 0, '创建门店', '创建门店: ' + name);
 
     triggerNotification({
@@ -96,17 +99,20 @@ router.put('/:storeId', (req: AuthRequest, res: Response) => {
     if (!isStoreAdmin(req.user.role)) return res.status(403).json({ error: '无权限' });
     const { name, address, initial_capital } = req.body;
     const now = localDateTime();
-    db.prepare('UPDATE stores SET name = COALESCE(?, name), address = COALESCE(?, address), initial_capital = COALESCE(?, initial_capital), updated_at = ? WHERE id = ?').run(name, address, initial_capital, now, req.params.storeId);
-    const photos = req.body.photos;
-    if (Array.isArray(photos)) {
-      db.prepare('UPDATE stores SET photos = ? WHERE id = ?').run(JSON.stringify(photos), req.params.storeId);
-    }
-    const shBody = req.body.shareholders;
-    if (Array.isArray(shBody)) {
-      db.prepare('DELETE FROM shareholders WHERE store_id = ?').run(req.params.storeId);
-      const stmt = db.prepare('INSERT INTO shareholders (store_id, name, phone, ratio) VALUES (?,?,?,?)');
-      for (const sh of shBody) { stmt.run(req.params.storeId, sh.name || '', sh.phone || '', sh.ratio || 0); }
-    }
+    const tx = db.transaction(() => {
+      db.prepare('UPDATE stores SET name = COALESCE(?, name), address = COALESCE(?, address), initial_capital = COALESCE(?, initial_capital), updated_at = ? WHERE id = ?').run(name, address, initial_capital, now, req.params.storeId);
+      const photos = req.body.photos;
+      if (Array.isArray(photos)) {
+        db.prepare('UPDATE stores SET photos = ? WHERE id = ?').run(JSON.stringify(photos), req.params.storeId);
+      }
+      const shBody = req.body.shareholders;
+      if (Array.isArray(shBody)) {
+        db.prepare('DELETE FROM shareholders WHERE store_id = ?').run(req.params.storeId);
+        const stmt = db.prepare('INSERT INTO shareholders (store_id, name, phone, ratio) VALUES (?,?,?,?)');
+        for (const sh of shBody) { stmt.run(req.params.storeId, sh.name || '', sh.phone || '', sh.ratio || 0); }
+      }
+    });
+    tx();
     opLog(req.user.id, 0, '修改门店', '修改门店信息');
 
     triggerNotification({
@@ -146,7 +152,10 @@ router.delete('/:id', (req: AuthRequest, res: Response) => {
       db.prepare('DELETE FROM handovers WHERE store_id = ?').run(storeId);
       db.prepare('DELETE FROM store_opens WHERE store_id = ?').run(storeId);
       db.prepare('DELETE FROM notifications WHERE store_id = ?').run(storeId);
-      db.prepare('DELETE FROM op_logs WHERE store_id = ?').run(storeId);
+      db.prepare('DELETE FROM op_logs WHERE target = ?').run(storeId);
+      db.prepare('DELETE FROM purchase_records WHERE store_id = ?').run(storeId);
+      db.prepare('DELETE FROM purchase_items WHERE store_id = ?').run(storeId);
+      db.prepare('DELETE FROM store_notification_settings WHERE store_id = ?').run(storeId);
       db.prepare("DELETE FROM users WHERE store_id = ? AND role != 'ADMIN'").run(storeId);
       db.prepare('DELETE FROM stores WHERE id = ?').run(storeId);
     });
@@ -172,8 +181,8 @@ router.get('/:storeId/stats', (req: AuthRequest, res: Response) => {
     if (!isManagerOrAbove(user.role) && String(user.store_id) !== String(req.params.storeId)) return res.status(403).json({ error: '无权限' });
     const storeId = req.params.storeId;
     const today = localDate();
-    const income = (db.prepare("SELECT COALESCE(SUM(amount),0) as total FROM entries WHERE store_id=? AND type IN ('收入','income') AND date=?").get(storeId, today) as any)?.total || 0;
-    const expense = (db.prepare("SELECT COALESCE(SUM(amount),0) as total FROM entries WHERE store_id=? AND type IN ('支出','expense') AND date=?").get(storeId, today) as any)?.total || 0;
+    const income = (db.prepare("SELECT COALESCE(SUM(amount),0) as total FROM entries WHERE store_id=? AND type IN ('收入','income') AND date=?" + entryFilterClause(req.user.role)).get(storeId, today) as any)?.total || 0;
+    const expense = (db.prepare("SELECT COALESCE(SUM(amount),0) as total FROM entries WHERE store_id=? AND type IN ('支出','expense') AND date=?" + entryFilterClause(req.user.role)).get(storeId, today) as any)?.total || 0;
     const staffCount = (db.prepare('SELECT COUNT(*) as count FROM users WHERE store_id = ?').get(storeId) as any).count || 0;
     res.json({ income, expense, profit: income - expense, staffCount });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
@@ -227,7 +236,7 @@ router.post('/:storeId/staff', (req: AuthRequest, res: Response) => {
 });
 
 router.put('/:storeId/staff/:id', (req: AuthRequest, res: Response) => {
-  if (!isStoreAdmin(req.user.role)) return res.status(403).json({ error: '无权限' });
+  if (!isManagerOrAbove(req.user.role)) return res.status(403).json({ error: '无权限' });
   try {
     const targetUser = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id) as any;
     if (!targetUser) return res.status(404).json({ error: '员工不存在' });
@@ -247,7 +256,11 @@ router.put('/:storeId/staff/:id', (req: AuthRequest, res: Response) => {
     if (position !== undefined) { fields.push('job_title=?'); vals.push(position); }
     if (address !== undefined) { fields.push('address=?'); vals.push(address); }
     if (monthly_salary !== undefined) { fields.push('salary=?'); vals.push(monthly_salary); }
-    if (role !== undefined) { fields.push('role=?'); vals.push(role); }
+    if (role !== undefined) {
+      const allowedRoles = ['STAFF', 'MANAGER', 'SHAREHOLDER', 'STORE_ADMIN'];
+      if (!allowedRoles.includes(role)) return res.status(400).json({ error: '无效的角色' });
+      fields.push('role=?'); vals.push(role);
+    }
     if (avatar !== undefined) { fields.push('avatar=?'); vals.push(avatar); }
     if (status !== undefined) { fields.push('status=?'); vals.push(status); }
     if (password) { fields.push('password_hash=?'); vals.push(bcrypt.hashSync(password, 10)); }
@@ -295,9 +308,12 @@ router.put('/:storeId/shareholders', (req: AuthRequest, res: Response) => {
     const storeId = req.params.storeId;
     const { shareholders } = req.body;
     if (!Array.isArray(shareholders)) return res.status(400).json({ error: '参数错误' });
-    db.prepare('DELETE FROM shareholders WHERE store_id = ?').run(storeId);
-    const stmt = db.prepare('INSERT INTO shareholders (store_id, name, phone, ratio) VALUES (?,?,?,?)');
-    for (const sh of shareholders) { stmt.run(storeId, sh.name || '', sh.phone || '', sh.ratio || 0); }
+    const tx = db.transaction(() => {
+      db.prepare('DELETE FROM shareholders WHERE store_id = ?').run(storeId);
+      const stmt = db.prepare('INSERT INTO shareholders (store_id, name, phone, ratio) VALUES (?,?,?,?)');
+      for (const sh of shareholders) { stmt.run(storeId, sh.name || '', sh.phone || '', sh.ratio || 0); }
+    });
+    tx();
     opLog(req.user.id, 0, '更新股东', '更新股东配置');
     res.json({ message: '股东信息更新成功' });
   } catch (err: any) {
@@ -311,13 +327,24 @@ router.get('/:storeId/notification-settings', (req: AuthRequest, res: Response) 
   try {
     if (!isManagerOrAbove(req.user.role)) return res.status(403).json({ error: '无权限' });
     const storeId = req.params.storeId;
-    const settings = db.prepare('SELECT * FROM store_notification_settings WHERE store_id = ?').get(storeId);
+    let settings = db.prepare('SELECT * FROM store_notification_settings WHERE store_id = ?').get(storeId);
     if (!settings) {
       db.prepare('INSERT INTO store_notification_settings (store_id) VALUES (?)').run(storeId);
-      res.json(db.prepare('SELECT * FROM store_notification_settings WHERE store_id = ?').get(storeId));
-    } else {
-      res.json(settings);
+      settings = db.prepare('SELECT * FROM store_notification_settings WHERE store_id = ?').get(storeId);
     }
+    // 脱敏：只有 ADMIN 才能看到完整密钥
+    if (!isAdmin(req.user.role)) {
+      const masked = { ...settings };
+      const sensitiveFields = ['pushplus_token', 'serverchan_key', 'wecom_secret'];
+      for (const field of sensitiveFields) {
+        if (masked[field]) {
+          const val = String(masked[field]);
+          masked[field] = val.substring(0, 4) + '****' + val.substring(val.length - 4);
+        }
+      }
+      return res.json(masked);
+    }
+    res.json(settings);
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
@@ -354,11 +381,19 @@ router.post('/:storeId/notification-settings/test', (req: AuthRequest, res: Resp
   try {
     if (!isStoreAdmin(req.user.role)) return res.status(403).json({ error: '无权限' });
     const storeId = req.params.storeId;
-    const settings = db.prepare('SELECT * FROM store_notification_settings WHERE store_id = ?').get(storeId) as any;
-    if (!settings) return res.status(400).json({ error: '请先配置通知渠道' });
-    // imported at top
-    sendStoreNotification(storeId, '测试通知', '这是一条测试通知\n发送时间: ' + new Date().toLocaleString('zh-CN'), settings)
-      .then(() => res.json({ message: '测试通知已发送' }))
+    const dbSettings = db.prepare('SELECT * FROM store_notification_settings WHERE store_id = ?').get(storeId) as any;
+    const bodyConfig = req.body && req.body.config ? req.body.config : {};
+    const settings = Object.assign({}, dbSettings || {}, bodyConfig);
+    const channel = (req.query.channel as string) || '';
+    console.log('[Test] channel:', channel, 'settings keys:', Object.keys(settings).filter(k => settings[k] && k !== 'store_id' && k !== 'id' && k !== 'updated_at'));
+    sendStoreNotification(storeId, '测试通知', '这是一条测试通知\n发送时间: ' + new Date().toLocaleString('zh-CN'), settings, channel)
+      .then((result) => {
+        if (result.errors.length > 0 && result.results.length === 0) {
+          res.status(500).json({ error: '推送失败: ' + result.errors.join('; ') });
+        } else {
+          res.json({ message: '推送成功', results: result.results, errors: result.errors });
+        }
+      })
       .catch((err: any) => res.status(500).json({ error: '发送失败: ' + err.message }));
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });

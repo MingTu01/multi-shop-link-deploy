@@ -1,7 +1,11 @@
 process.env.TZ = 'Asia/Shanghai';
+if (!process.env.NODE_ENV) process.env.NODE_ENV = 'production';
+import { initPush } from './push-notify.js';
 import express from 'express';
+import crypto from 'crypto';
 import cors from 'cors';
 import compression from 'compression';
+import rateLimit from 'express-rate-limit';
 import { join } from 'path';
 import { copyFileSync, mkdirSync, existsSync, readdirSync, statSync, readFileSync, writeFileSync, unlinkSync } from 'fs';
 import db from './db.js';
@@ -42,13 +46,13 @@ app.set('trust proxy', 1);
 const PORT = process.env.PORT || 3001;
 
 // S7: CORS 配置
-// 未设置 CORS_ORIGIN 时默认允许所有来源
+// 未设置 CORS_ORIGIN 时默认使用生产域名
 const corsOrigin = process.env.CORS_ORIGIN || '';
 const corsOptions: cors.CorsOptions = {
   origin: corsOrigin
     ? corsOrigin.split(',').map(s => s.trim())
     : true,
-  credentials: true
+  credentials: !!corsOrigin  // Only set credentials when specific origins are configured
 };
 app.use(compression({ level: 6, threshold: 1024 }));
 // 安全HTTP头
@@ -57,24 +61,31 @@ app.use((req, res, next) => {
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   // 防止MIME类型嗅探
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  // XSS保护
-  res.setHeader('X-XSS-Protection', '1; mode=block');
   // 防止信息泄露
   res.removeHeader('X-Powered-By');
   // CSP - 允许内联样式（Tailwind需要），禁止外部脚本
+  // 生成请求级别的 CSP nonce
+  const nonce = crypto.randomBytes(16).toString('base64');
+  res.locals.cspNonce = nonce;
+
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
-    "script-src 'self' 'unsafe-inline'",
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: http: https:",
+    `script-src 'self' 'unsafe-inline' 'unsafe-eval' 'nonce-${nonce}'`,  // unsafe-inline 作为 fallback
+    "style-src 'self' 'unsafe-inline'",  // Tailwind 需要
+    "img-src 'self' data: blob: https:",
     "font-src 'self' data:",
-    "connect-src 'self' http: https: ws: wss:",
+    "connect-src 'self'",
     "frame-ancestors 'self'",
     "base-uri 'self'",
     "form-action 'self'"
   ].join('; '));
   // Referrer策略
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  // Permissions-Policy - 限制浏览器API
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
+  // Cross-Origin 安全头
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   next();
 });
 
@@ -83,6 +94,23 @@ app.use(cors(corsOptions));
 // P5: JSON body 大小限制可配置，默认从 50MB 降到 5MB
 const jsonLimit = process.env.JSON_LIMIT || '5mb';
 app.use(express.json({ limit: jsonLimit }));
+
+// Security: Global rate limit - 100 requests per minute per IP for API routes
+const globalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  standardHeaders: false,
+  legacyHeaders: false,
+  message: '请求过于频繁，请稍后重试',
+  skip: (req) => {
+    // Skip rate limiting for non-API routes (static files, SPA)
+    if (!req.path.startsWith('/api/')) return true;
+    // Skip SSE connections (long-lived, only heartbeat traffic)
+    if (req.path === '/api/sse') return true;
+    return false;
+  }
+});
+app.use(globalLimiter);
 
 // Smart path detection for web dist
 const POSSIBLE_WEB_DIST = [
@@ -115,9 +143,12 @@ app.use(express.static(WEB_DIST_PATH, {
   }));
 app.use(express.static(join(BASE_DIR, 'public')));
 // File serving - UUID filenames provide security (no auth needed for display)
-app.use('/uploads', express.static(join(BASE_DIR, 'uploads'), { maxAge: '30d', etag: true }));
+app.use('/uploads', authMiddleware, express.static(join(BASE_DIR, 'uploads'), { maxAge: '30d', etag: true }));
 
 // Public auth routes
+
+// Health check (no auth)
+app.get('/api/health', (_req, res) => { res.json({ status: 'ok', ts: Date.now() }); });
 
 // SSE - Server-Sent Events for real-time data push
 app.get('/api/sse', authMiddleware, (req, res) => {
@@ -130,7 +161,14 @@ app.get('/api/sse', authMiddleware, (req, res) => {
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
 
-  const clientId = eventBus.addClient(userId, res);
+  const role = (req as any).user?.role || 'STAFF';
+  const storeId = (req as any).user?.store_id || null;
+  const clientId = eventBus.addClient(userId, role, storeId, res);
+  // 连接数超限（每用户最多3个）
+  if (!clientId) {
+    res.status(429).json({ error: 'SSE 连接数超限，请稍后重试' });
+    return;
+  }
 
   const heartbeat = setInterval(() => {
     try { res.write('data: {"type":"heartbeat","ts":' + Date.now() + '}\n\n'); } catch {}
@@ -243,7 +281,8 @@ app.get('{*splat}', (req, res) => {
 // Prevent server crash on unhandled errors
 process.on('uncaughtException', (err) => {
   console.error('[FATAL] Uncaught Exception:', err.message);
-  // Don't exit, keep server running
+  console.error('[FATAL] Stack:', err.stack);
+  process.exit(1); // 让 Docker restart:always 自动重启
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[FATAL] Unhandled Rejection:', reason);
@@ -270,6 +309,7 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
+initPush();
 app.listen(PORT, '0.0.0.0', () => {
   console.log('Server running on http://0.0.0.0:' + PORT);
   // Broadcast server-ready to all SSE clients after startup

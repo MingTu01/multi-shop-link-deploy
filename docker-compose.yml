@@ -12,8 +12,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3001
-      # 生产环境必须设置: 你的域名(含协议)，多个用逗号分隔
-      # 例: CORS_ORIGIN=https://your-domain.com
       - JWT_SECRET=${JWT_SECRET:-please-change-this-secret}
       - CORS_ORIGIN=${CORS_ORIGIN:-}
+      - COOKIE_SECURE=false
     restart: unless-stopped

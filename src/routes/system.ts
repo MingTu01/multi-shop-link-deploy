@@ -1,13 +1,14 @@
-﻿import { Router, Response } from 'express';
+import { Router, Response } from 'express';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { join } from 'path';
 const BASE_DIR = join(__dirname, '..', '..');
-import { exec } from 'child_process';
+import { exec, execFileSync } from 'child_process';
 import { readdirSync, statSync, unlinkSync, copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, rmSync, cpSync } from 'fs';
 import os from 'os';
+import crypto from 'crypto';
 import multer from 'multer';
 import AdmZip from 'adm-zip';
 import db from '../db.js';
@@ -16,6 +17,21 @@ import { AuthRequest } from '../auth.js';
 import { getSettings, sendNotification, buildDailyReport, buildWeeklyReport, buildMonthlyReport, buildReviewReminder, buildAlert } from '../notify.js';
 import { safePath } from '../middleware/store-access.js';
 
+
+// 安全校验：cleanup.json 路径白名单（CRITICAL安全加固）
+function validateCleanupPath(p: string): boolean {
+  // 禁止路径遍历
+  if (p.includes('..')) return false;
+  // 规范化路径分隔符
+  const normalized = p.replace(/\\/g, '/').toLowerCase();
+  // 禁止指向 data/、backups/、uploads/ 目录
+  if (normalized.startsWith('data/') || normalized === 'data') return false;
+  if (normalized.startsWith('backups/') || normalized === 'backups') return false;
+  if (normalized.startsWith('uploads/') || normalized === 'uploads') return false;
+  // 只允许 src/ 和 public/ 下的文件
+  if (!normalized.startsWith('src/') && !normalized.startsWith('public/')) return false;
+  return true;
+}
 const router = Router();
 const upload = multer({
   dest: join(BASE_DIR, 'uploads'),
@@ -34,6 +50,12 @@ const sseClients: Set<Response> = new Set();
 let upgradeState = { step: 0, message: '', complete: false };
 
 function broadcastProgress(event: string, data: any) {
+  // Update upgradeState for polling fallback
+  if (event === 'progress') {
+    upgradeState = { step: data.step || 0, message: data.message || '', complete: false };
+  } else if (event === 'complete') {
+    upgradeState = { step: upgradeState.step, message: data.message || '更新完成', complete: true };
+  }
   const msg = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
   for (const client of sseClients) {
     try { client.write(msg); } catch { sseClients.delete(client); }
@@ -208,8 +230,7 @@ router.post('/backups/:filename/restore', (req: AuthRequest, res: Response) => {
     setTimeout(() => {
       try {
         if (process.platform === 'win32') {
-          const { execSync } = require('child_process');
-          execSync('taskkill /F /PID ' + process.pid, { windowsHide: true });
+          execFileSync('taskkill', ['/F', '/PID', String(process.pid)], { windowsHide: true });
         } else {
           process.kill(process.pid, 'SIGTERM');
         }
@@ -313,8 +334,8 @@ router.post('/upgrade', upload.single('file'), (req: AuthRequest, res: Response)
         await new Promise(r => setTimeout(r, 500));
         console.log('[Upgrade] Step 3: Starting file copy...');
         // Step 3: Update files
-        upgradeState = { step: 3, message: '正在更新', complete: false };
-        broadcastProgress('progress', { step: 3, total: 4, message: '正在更新' });
+        upgradeState = { step: 3, message: '解压并更新', complete: false };
+        broadcastProgress('progress', { step: 3, total: 4, message: '解压并更新' });
         const copyDir = (src, dest) => {
           mkdirSync(dest, { recursive: true });
           for (const entry of readdirSync(src, { withFileTypes: true })) {
@@ -340,6 +361,7 @@ router.post('/upgrade', upload.single('file'), (req: AuthRequest, res: Response)
             console.log('[Upgrade] Processing cleanup.json:', cleanup.description || 'no description');
             if (Array.isArray(cleanup.deleteFiles)) {
               for (const f of cleanup.deleteFiles) {
+                if (!validateCleanupPath(f)) { console.warn('[Upgrade] BLOCKED unsafe deleteFiles path:', f); continue; }
                 const target = join(BASE_DIR, f);
                 if (existsSync(target)) {
                   try { unlinkSync(target); console.log('[Upgrade] Deleted file:', f); } catch (e) { console.warn('[Upgrade] Failed to delete', f, e.message); }
@@ -348,6 +370,7 @@ router.post('/upgrade', upload.single('file'), (req: AuthRequest, res: Response)
             }
             if (Array.isArray(cleanup.deleteDirs)) {
               for (const d of cleanup.deleteDirs) {
+                if (!validateCleanupPath(d)) { console.warn('[Upgrade] BLOCKED unsafe deleteDirs path:', d); continue; }
                 const target = join(BASE_DIR, d);
                 if (existsSync(target)) {
                   try { rmSync(target, { recursive: true, force: true }); console.log('[Upgrade] Deleted dir:', d); } catch (e) { console.warn('[Upgrade] Failed to delete dir', d, e.message); }
@@ -367,6 +390,7 @@ router.post('/upgrade', upload.single('file'), (req: AuthRequest, res: Response)
           const webDest = join(BASE_DIR, 'public', 'web-dist');
           copyDir(webDistSrc, webDest);
           console.log('[Upgrade] web-dist updated');
+          broadcastProgress('progress', { step: 3, total: 4, message: '更新前端文件' });
         } else {
           broadcastProgress('error', { message: '升级失败: web-dist目录不存在' });
           return;
@@ -382,6 +406,7 @@ router.post('/upgrade', upload.single('file'), (req: AuthRequest, res: Response)
         const srcDest = join(BASE_DIR, 'src');
         copyDir(sSrc, srcDest);
         console.log('[Upgrade] server code updated');
+        broadcastProgress('progress', { step: 3, total: 4, message: '更新服务端代码' });
         // === 更新 package.json ===
         const pkgFile = join(workDir, 'package.json');
         if (existsSync(pkgFile)) {
@@ -392,8 +417,7 @@ router.post('/upgrade', upload.single('file'), (req: AuthRequest, res: Response)
         try {
           console.log('[Upgrade] Running npm install...');
           broadcastProgress('progress', { step: 3, total: 4, message: '正在安装依赖' });
-          const { execSync } = require('child_process');
-          execSync('npm install --omit=dev', { cwd: BASE_DIR, timeout: 300000, stdio: 'pipe' });
+          execFileSync('npm', ['install', '--omit=dev'], { cwd: BASE_DIR, timeout: 300000, stdio: 'pipe' });
           console.log('[Upgrade] npm install completed');
         } catch (e) {
           console.error('[Upgrade] npm install FAILED:', e.message);
@@ -404,10 +428,14 @@ router.post('/upgrade', upload.single('file'), (req: AuthRequest, res: Response)
         const postUpgradeScript = join(workDir, 'post-upgrade.cjs');
         if (existsSync(postUpgradeScript)) {
           try {
+            // 安全校验：路径白名单（仅允许安全字符）
+            const safePathRegex = /^[a-zA-Z0-9._\-\/\\:]+$/;
+            if (!safePathRegex.test(postUpgradeScript)) {
+              throw new Error('post-upgrade 脚本路径包含不安全字符');
+            }
             console.log('[Upgrade] Running post-upgrade script...');
             broadcastProgress('progress', { step: 3, total: 4, message: '正在执行后置脚本' });
-            const { execSync } = require('child_process');
-            execSync('node "' + postUpgradeScript + '"', { cwd: BASE_DIR, timeout: 120000, stdio: 'pipe' });
+            execFileSync('node', [postUpgradeScript], { cwd: BASE_DIR, timeout: 120000, stdio: 'pipe' });
             console.log('[Upgrade] Post-upgrade script completed');
           } catch (e) {
             console.warn('[Upgrade] Post-upgrade script failed (non-fatal):', e.message);
@@ -455,7 +483,22 @@ router.post('/restart', (req: AuthRequest, res: Response) => {
 // 通知设置 — ADMIN
 router.get('/notification-settings', (req: AuthRequest, res: Response) => {
   if (!isStoreAdmin(req.user.role)) return res.status(403).json({ error: '无权限' });
-  try { res.json(getSettings()); } catch (err: any) { res.status(500).json({ error: err.message }); }
+  try {
+    const settings = getSettings();
+    // 脱敏：只有 ADMIN 才能看到完整密钥
+    if (!isAdmin(req.user.role)) {
+      const masked = { ...settings };
+      const sensitiveFields = ['pushplus_token', 'serverchan_key', 'wecom_secret'];
+      for (const field of sensitiveFields) {
+        if (masked[field]) {
+          const val = String(masked[field]);
+          masked[field] = val.substring(0, 4) + '****' + val.substring(val.length - 4);
+        }
+      }
+      return res.json(masked);
+    }
+    res.json(settings);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
 router.put('/notification-settings', (req: AuthRequest, res: Response) => {
@@ -488,6 +531,8 @@ router.put('/notification-settings', (req: AuthRequest, res: Response) => {
 router.post('/notification-settings/test', (req: AuthRequest, res: Response) => {
   try {
     if (!isStoreAdmin(req.user.role)) return res.status(403).json({ error: '无权限' });
+
+    const bodyConfig = req.body && req.body.config ? req.body.config : null;
     const type = req.query.type as string || 'daily';
     (() => {
       let title = '测试通知'; let content = '这是一条测试通知消息\n发送时间: ' + new Date().toLocaleString('zh-CN');
@@ -496,7 +541,7 @@ router.post('/notification-settings/test', (req: AuthRequest, res: Response) => 
       else if (type === 'monthly') { title = '月度报告'; content = buildMonthlyReport(); }
       else if (type === 'review') { title = '待审核提醒'; content = buildReviewReminder(); }
       else if (type === 'alert') { title = '系统告警'; content = buildAlert('测试告警信息'); }
-      return sendNotification(title, content, type);
+      return sendNotification(title, content, type, bodyConfig);
     })()
       .then(() => res.json({ message: '测试通知已发送' }))
       .catch((err: any) => res.status(500).json({ error: '发送失败: ' + err.message }));
@@ -649,6 +694,7 @@ router.post('/do-update', async (req: AuthRequest, res: Response) => {
       try {
         console.log('[Update] Async function started');
         console.log('[Update] BASE_DIR:', BASE_DIR);
+        upgradeState = { step: 0, message: '', complete: false };
         
         // Step 1: Backup
         broadcastProgress('progress', { step: 1, total: 4, message: '正在备份数据' });
@@ -673,10 +719,15 @@ router.post('/do-update', async (req: AuthRequest, res: Response) => {
         if (!zipRes) throw new Error('无法下载更新包');
         const zipBuffer = Buffer.from(await zipRes.arrayBuffer());
         broadcastProgress('progress', { step: 2, total: 4, message: '下载完成', done: true });
-        await new Promise(r => setTimeout(r, 1000));
+        await new Promise(r => setTimeout(r, 500));
+        // Step 2.5: SHA256 integrity check
+        const zipHash = crypto.createHash('sha256').update(zipBuffer).digest('hex');
+        console.log('[Update] ZIP SHA256:', zipHash);
+        broadcastProgress('progress', { step: 2, total: 4, message: '校验更新包完整性' });
+        await new Promise(r => setTimeout(r, 500));
         
         // Step 3: Extract & Update
-        broadcastProgress('progress', { step: 3, total: 4, message: '正在更新' });
+        broadcastProgress('progress', { step: 3, total: 4, message: '正在解压更新包' });
         const extractDir = join(BASE_DIR, 'uploads', 'extract-' + now);
         mkdirSync(extractDir, { recursive: true });
         const zip = new AdmZip(zipBuffer);
@@ -692,15 +743,34 @@ router.post('/do-update', async (req: AuthRequest, res: Response) => {
           }
         }
         const realExtractedFolder = extractedFolder;
-        
+        // Check checksum.json if present in update package
+        const checksumFile = join(realExtractedFolder, 'checksum.json');
+        if (existsSync(checksumFile)) {
+          try {
+            const ckData = JSON.parse(readFileSync(checksumFile, 'utf8'));
+            if (ckData.sha256 && ckData.sha256 !== zipHash) {
+              throw new Error('SHA256 mismatch');
+            }
+            console.log('[Update] Checksum verified OK');
+          } catch (ckErr) {
+            if (ckErr.message.includes('mismatch')) throw ckErr;
+            console.warn('[Update] checksum.json parse failed:', ckErr.message);
+          }
+        } else {
+          console.warn('[Update] No checksum.json, skip hash check');
+        }
+
         // --- cleanup.json 清理清单 ---
         const cleanupJsonPath = join(realExtractedFolder, 'cleanup.json');
         if (existsSync(cleanupJsonPath)) {
           try {
             const cleanup = JSON.parse(readFileSync(cleanupJsonPath, 'utf-8'));
             console.log('[Update] Processing cleanup.json:', cleanup.description || '');
+          broadcastProgress('progress', { step: 3, total: 4, message: '清理旧文件' });
+          await new Promise(r => setTimeout(r, 300));
             if (Array.isArray(cleanup.deleteFiles)) {
               for (const f of cleanup.deleteFiles) {
+                if (!validateCleanupPath(f)) { console.warn('[Update] BLOCKED unsafe deleteFiles path:', f); continue; }
                 const target = join(BASE_DIR, f);
                 if (existsSync(target)) {
                   try { unlinkSync(target); console.log('[Update] Deleted:', f); } catch (e: any) { console.warn('[Update] Failed to delete', f, e.message); }
@@ -709,6 +779,7 @@ router.post('/do-update', async (req: AuthRequest, res: Response) => {
             }
             if (Array.isArray(cleanup.deleteDirs)) {
               for (const d of cleanup.deleteDirs) {
+                if (!validateCleanupPath(d)) { console.warn('[Update] BLOCKED unsafe deleteDirs path:', d); continue; }
                 const target = join(BASE_DIR, d);
                 if (existsSync(target)) {
                   try { rmSync(target, { recursive: true, force: true }); console.log('[Update] Deleted dir:', d); } catch (e: any) { console.warn('[Update] Failed to delete dir', d, e.message); }
@@ -726,6 +797,8 @@ router.post('/do-update', async (req: AuthRequest, res: Response) => {
             }
           cpSync(publicDir, destPublic, { recursive: true, force: true });
           console.log('[Update] web-dist updated');
+          broadcastProgress('progress', { step: 3, total: 4, message: '更新前端文件' });
+          await new Promise(r => setTimeout(r, 300));
         }
         // === 更新服务端代码 ===
         const srcDir = join(realExtractedFolder, 'src');
@@ -735,6 +808,8 @@ router.post('/do-update', async (req: AuthRequest, res: Response) => {
         const destSrc = join(BASE_DIR, 'src');
         cpSync(srcDir, destSrc, { recursive: true, force: true });
         console.log('[Update] server-src updated');
+        broadcastProgress('progress', { step: 3, total: 4, message: '更新服务端代码' });
+        await new Promise(r => setTimeout(r, 300));
         const pkgFile = join(realExtractedFolder, 'package.json');
         if (existsSync(pkgFile)) {
           copyFileSync(pkgFile, join(BASE_DIR, 'package.json'));
@@ -748,9 +823,15 @@ router.post('/do-update', async (req: AuthRequest, res: Response) => {
         const postUpgradeScript = join(realExtractedFolder, 'post-upgrade.cjs');
         if (existsSync(postUpgradeScript)) {
           try {
-            console.log('[Update] Running post-upgrade script...');
-            const { execSync } = require('child_process');
-            execSync('node "' + postUpgradeScript + '"', { cwd: BASE_DIR, timeout: 120000, stdio: 'pipe' });
+            // 安全校验：路径白名单（仅允许安全字符）
+            const safePathRegex = /^[a-zA-Z0-9._\-\/\\:]+$/;
+            if (!safePathRegex.test(postUpgradeScript)) {
+              throw new Error('post-upgrade 脚本路径包含不安全字符');
+            }
+            broadcastProgress('progress', { step: 3, total: 4, message: '执行后置脚本' });
+        await new Promise(r => setTimeout(r, 300));
+        console.log('[Update] Running post-upgrade script...');
+            execFileSync('node', [postUpgradeScript], { cwd: BASE_DIR, timeout: 120000, stdio: 'pipe' });
             console.log('[Update] Post-upgrade completed');
           } catch (e) { console.warn('[Update] Post-upgrade failed (non-fatal):', e.message); }
         }
@@ -772,6 +853,112 @@ router.post('/do-update', async (req: AuthRequest, res: Response) => {
         broadcastProgress('error', { message: '更新失败: ' + err.message });
       }
     })();
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+
+// ── 用户个人推送设置（改造版） ──
+import { encryptToken, decryptToken, checkTestRateLimit, isContentTypeAllowed, sendPushPlus, sendServerChan, sendWeCom, sendIyuu } from '../notify.js';
+import { getVapidPublicKey, saveSubscription, removeSubscription, sendPushNotification } from '../push-notify.js';
+
+// GET: 读取自己的设置（解密返回）
+router.get('/user-notification-settings', (req: AuthRequest, res: Response) => {
+  try {
+    const row = db.prepare('SELECT * FROM user_notification_settings WHERE user_id = ?').get(req.user.id) as any;
+    if (!row) return res.json({});
+    const result = { ...row };
+    if (result.pushplus_token) result.pushplus_token = decryptToken(result.pushplus_token);
+    if (result.serverchan_key) result.serverchan_key = decryptToken(result.serverchan_key);
+    if (result.wecom_secret) result.wecom_secret = decryptToken(result.wecom_secret);
+    res.json(result);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// PUT: 保存自己的设置（加密存储，角色校验）
+router.put('/user-notification-settings', (req: AuthRequest, res: Response) => {
+  try {
+    const role = req.user.role;
+    const { pushplus_token, serverchan_key, wecom_corpid, wecom_agentid, wecom_secret, wecom_userid, wecom_proxy_url, method } = req.body;
+    if (!isAdmin(role) && (wecom_corpid || wecom_secret)) {
+      return res.status(403).json({ error: '企业微信仅限系统管理员配置' });
+    }
+    const pushFields = ['push_entry','push_payroll','push_dividend','push_inventory','push_shift','push_purchase','push_health_cert','push_staff','push_store','push_report','push_review','push_alert'];
+    const pushValues: Record<string, number> = {};
+    for (const f of pushFields) { if (req.body[f] !== undefined) pushValues[f] = req.body[f] ? 1 : 0; }
+    const encToken = pushplus_token ? encryptToken(pushplus_token) : '';
+    const encKey = serverchan_key ? encryptToken(serverchan_key) : '';
+    const encSecret = wecom_secret ? encryptToken(wecom_secret) : '';
+    const existing = db.prepare('SELECT user_id FROM user_notification_settings WHERE user_id = ?').get(req.user.id);
+    if (existing) {
+      let sql = 'UPDATE user_notification_settings SET pushplus_token=?, serverchan_key=?, wecom_corpid=?, wecom_agentid=?, wecom_secret=?, wecom_userid=?, wecom_proxy_url=?, method=?, updated_at=?';
+      const params: any[] = [encToken, encKey, wecom_corpid||'', wecom_agentid||'', encSecret, wecom_userid||'', wecom_proxy_url||'', method||'none', new Date().toISOString()];
+      for (const [k, v] of Object.entries(pushValues)) { sql += ', ' + k + '=?'; params.push(v); }
+      sql += ' WHERE user_id=?'; params.push(req.user.id);
+      db.prepare(sql).run(...params);
+    } else {
+      const cols = ['user_id','pushplus_token','serverchan_key','wecom_corpid','wecom_agentid','wecom_secret','wecom_userid','wecom_proxy_url','method','updated_at'];
+      const vals: any[] = [req.user.id, encToken, encKey, wecom_corpid||'', wecom_agentid||'', encSecret, wecom_userid||'', wecom_proxy_url||'', method||'none', new Date().toISOString()];
+      for (const [k, v] of Object.entries(pushValues)) { cols.push(k); vals.push(v); }
+      db.prepare('INSERT INTO user_notification_settings (' + cols.join(',') + ') VALUES (' + cols.map(()=>'?').join(',') + ')').run(...vals);
+    }
+    res.json({ message: '推送设置已保存' });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// POST test: 测试推送（频率限制 + 角色校验）
+router.post('/user-notification-settings/test', async (req: AuthRequest, res: Response) => {
+  try {
+    const limitErr = checkTestRateLimit(req.user.id);
+    if (limitErr) return res.status(429).json({ error: limitErr });
+    const config = req.body?.config || {};
+    const channel = (req.query.channel as string) || '';
+    if (!isAdmin(req.user.role) && channel === 'wecom') {
+      return res.status(403).json({ error: '企业微信仅限系统管理员配置' });
+    }
+    const title = '测试通知';
+    const content = '这是一条个人推送测试\n发送时间: ' + new Date().toLocaleString('zh-CN');
+    const results: string[] = [];
+    const errors: string[] = [];
+    const sendOne = async (key: string, fn: () => Promise<void>) => {
+      try { await fn(); results.push(key); } catch (e: any) { errors.push(key + ': ' + e.message); }
+    };
+    if (channel === 'pushplus' || (!channel && config.pushplus_token)) await sendOne('PushPlus', () => sendPushPlus(title, content, '', config));
+    if (channel === 'serverchan' || (!channel && config.serverchan_key)) await sendOne('Server酱', () => sendServerChan(title, content, config));
+    if (channel === 'wecom' || (!channel && config.wecom_corpid)) await sendOne('企业微信', () => sendWeCom(title, content, config));
+    if (channel === 'iyuu' || (!channel && config.iyuu_token)) await sendOne('爱语飞飞', () => sendIyuu(title, content, config));
+    if (results.length === 0 && errors.length === 0) res.status(400).json({ error: '请先配置至少一个推送渠道' });
+    else if (errors.length > 0 && results.length === 0) res.status(500).json({ error: '推送失败: ' + errors.join('; ') });
+    else res.json({ results, errors });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// ── 推送订阅 API ──
+router.get('/push/vapid-key', (req: AuthRequest, res: Response) => {
+  res.json({ publicKey: getVapidPublicKey() });
+});
+
+router.post('/push/subscribe', (req: AuthRequest, res: Response) => {
+  try {
+    const { endpoint, keys } = req.body;
+    if (!endpoint || !keys?.p256dh || !keys?.auth) return res.status(400).json({ error: '参数不完整' });
+    saveSubscription(req.user.id, { endpoint, keys });
+    res.json({ success: true });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/push/unsubscribe', (req: AuthRequest, res: Response) => {
+  try {
+    const { endpoint } = req.body;
+    if (!endpoint) return res.status(400).json({ error: '参数不完整' });
+    removeSubscription(req.user.id, endpoint);
+    res.json({ success: true });
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+router.post('/push/test', async (req: AuthRequest, res: Response) => {
+  try {
+    await sendPushNotification(req.user.id, '测试推送', '这是一条测试推送消息\n发送时间: ' + new Date().toLocaleString('zh-CN'));
+    res.json({ success: true, message: '测试推送已发送' });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
 
