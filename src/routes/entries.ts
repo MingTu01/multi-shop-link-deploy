@@ -1,4 +1,5 @@
-import { Router, Response } from 'express';
+import { requireNotReadonly } from '../middleware/require-role.js';
+﻿import { Router, Response } from 'express';
 import db from '../db.js';
 import { opLog } from '../oplog.js';
 import { AuthRequest } from '../auth.js';
@@ -6,6 +7,7 @@ import { isAdmin, isReadonly } from '../lib/roles.js';
 import { localDate, localDateTime } from '../lib/utils.js';
 import { triggerNotification } from '../notify-trigger.js';
 import { eventBus } from '../event-bus.js';
+import { sanitizeNote } from '../sanitize.js';
 
 function normalizeType(type: string): string {
   if (type === 'income') return '收入';
@@ -71,7 +73,7 @@ router.post('/', (req: AuthRequest, res: Response) => {
     let catId = category_id || null;
     if (catId) { const cat = db.prepare('SELECT name FROM categories WHERE id = ?').get(catId) as any; if (cat) categoryName = cat.name; }
     const nt = normalizeType(type);
-    const result = db.prepare('INSERT INTO entries (store_id,type,category,category_id,amount,note,date,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(storeId, nt, categoryName, catId, amount, note||'', date||localDate(), user.id, localDateTime());
+    const result = db.prepare('INSERT INTO entries (store_id,type,category,category_id,amount,note,date,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?)').run(storeId, nt, categoryName, catId, amount, sanitizeNote(note||''), date||localDate(), user.id, localDateTime());
     opLog(user.id, storeId, '记账', '新增' + nt + ' ' + categoryName + ' ¥' + amount, req.ip);
 
     triggerNotification({
@@ -81,7 +83,7 @@ router.post('/', (req: AuthRequest, res: Response) => {
       detail: user.name + ' 在门店新增' + nt + ': ' + categoryName + ' ¥' + amount
     , operatorName: req.user.name || req.user.username});
 
-    eventBus.broadcast({ type: 'entry', action: 'create', storeId, data: { id: result.lastInsertRowid }, excludeUserId: user.id });
+    eventBus.broadcast({ type: 'entry', action: 'create', storeId, data: { id: result.lastInsertRowid } });
     res.json({ id: result.lastInsertRowid, success: true });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
@@ -102,7 +104,7 @@ router.put('/:id', (req: AuthRequest, res: Response) => {
     let catId = category_id || null;
     if (catId) { const cat = db.prepare('SELECT name FROM categories WHERE id = ?').get(catId) as any; if (cat) categoryName = cat.name; }
     const nt = normalizeType(type);
-    db.prepare('UPDATE entries SET type=?,category=?,category_id=?,amount=?,note=?,date=? WHERE id=?').run(nt, categoryName, catId, amount, note||'', date, req.params.id);
+    db.prepare('UPDATE entries SET type=?,category=?,category_id=?,amount=?,note=?,date=? WHERE id=?').run(nt, categoryName, catId, amount, sanitizeNote(note||''), date, req.params.id);
     const before = original ? { type: original.type, category: original.category || '未分类', amount: original.amount, note: original.note || '', date: original.date } : null;
     const after = { type: nt, category: categoryName || '未分类', amount: Number(amount), note: note || '', date };
     opLog(user.id, storeId, '记账', JSON.stringify({ action: 'modify', id: req.params.id, before, after }), req.ip);
@@ -114,7 +116,7 @@ router.put('/:id', (req: AuthRequest, res: Response) => {
       detail: user.name + ' 修改了记账 #' + req.params.id + ': ' + categoryName + ' ¥' + amount
     , operatorName: req.user.name || req.user.username});
 
-    eventBus.broadcast({ type: 'entry', action: 'update', storeId, data: { id: req.params.id }, excludeUserId: user.id });
+    eventBus.broadcast({ type: 'entry', action: 'update', storeId, data: { id: req.params.id } });
     res.json({ success: true });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
@@ -143,7 +145,7 @@ router.delete('/:id', (req: AuthRequest, res: Response) => {
       detail: user.name + ' 删除了记账 #' + req.params.id + (entry ? ': ' + entry.type + ' ' + entry.category + ' ¥' + entry.amount : '')
     , operatorName: req.user.name || req.user.username});
 
-    eventBus.broadcast({ type: 'entry', action: 'delete', storeId, data: { id: req.params.id }, excludeUserId: user.id });
+    eventBus.broadcast({ type: 'entry', action: 'delete', storeId, data: { id: req.params.id } });
     res.json({ success: true });
   } catch (err: any) { res.status(500).json({ error: err.message }); }
 });
