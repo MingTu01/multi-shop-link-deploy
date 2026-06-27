@@ -2,43 +2,36 @@ FROM node:20-bookworm-slim
 
 WORKDIR /app
 
-# Install build tools for native modules (better-sqlite3)
 RUN apt-get update && \
     apt-get install -y python3 make g++ --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy and install dependencies
+COPY .npmrc /app/.npmrc
 COPY package.json ./
-RUN npm install --omit=dev && npm cache clean --force
+RUN npm install --registry=https://registry.npmmirror.com && npm cache clean --force
 
-# Keep build tools for runtime npm install via entrypoint.sh
+RUN apt-get purge -y python3 make g++ && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
-# Copy server source
 COPY src ./src/
 COPY tsconfig.json ./
-
-# Copy frontend build to /app/public/web-dist
 COPY public ./public/
+COPY data/version.json ./data/version.json
+COPY msl.js ./msl.js
+COPY startup-check.js ./startup-check.js
+COPY startup.sh ./startup.sh
+RUN chmod +x /app/startup.sh
+RUN echo '#!/bin/sh' > /usr/local/bin/msl && echo 'node /app/msl.js' >> /usr/local/bin/msl && chmod +x /usr/local/bin/msl
 
-# Also symlink to /public/web-dist for path resolution
 RUN mkdir -p /public && ln -s /app/public/web-dist /public/web-dist
-
-# Create persistent directories
 RUN mkdir -p data uploads backups
-
-# Copy startup script
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-# Set timezone
-ENV TZ=Asia/Shanghai
 
 ENV NODE_ENV=production
 ENV PORT=3001
+ENV TZ=Asia/Shanghai
 
 EXPOSE 3001
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "fetch('http://localhost:3001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))" || exit 1
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD node -e "fetch('http://localhost:3001/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-ENTRYPOINT ["/entrypoint.sh"]
+CMD ["/app/startup.sh"]
