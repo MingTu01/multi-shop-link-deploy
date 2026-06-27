@@ -1,14 +1,6 @@
 {
   "version": "2026-06-27",
-  "description": "Auto-cleanup: 7 files removed",
-  "deleteFiles": [
-    "public/web-dist/assets/AdminSettingsPage-TeozMtoO.js",
-    "public/web-dist/assets/App-DXUzxjUK.js",
-    "public/web-dist/assets/NotificationsPage-DaermH78.js",
-    "public/web-dist/assets/PushSettingsButton-BW6zJ6R1.js",
-    "public/web-dist/assets/StoreAccountPage-BIS2KBQb.js",
-    "public/web-dist/assets/StoreNotificationsPage-C_kf2tCq.js",
-    "public/web-dist/assets/index-CDKez8_M.js"
-  ],
+  "description": "No files to clean",
+  "deleteFiles": [],
   "deleteDirs": []
 }
