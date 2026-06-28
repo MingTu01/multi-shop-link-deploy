@@ -1,0 +1,2 @@
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["assets/web-tJgiob5P.js","assets/dist-CXkn6QDR.js"])))=>i.map(i=>d[i]);
+import{p as e}from"./vendor-react-fPO6gwnG.js";import{n as t}from"./dist-CXkn6QDR.js";var n=t(`JPush`,{web:()=>e(()=>import(`./web-tJgiob5P.js`).then(e=>new e.JPushPluginWeb),__vite__mapDeps([0,1]))});export{n as JPush};
