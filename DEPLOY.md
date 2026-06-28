@@ -8,158 +8,78 @@
 | 管理面板 | 1Panel（推荐） |
 | 内存 | 1GB+（推荐 2GB） |
 | 磁盘 | 5GB+ 可用空间 |
+| Node.js | 20+（Docker 镜像自带） |
 
 ---
 
-## 一、首次部署（1Panel 方式）
+## 一、首次部署（Docker Compose 方式）
 
-### 1.1 上传项目
+### 1.1 克隆部署仓库
 
-通过 1Panel 文件管理器上传 `multi-shop-link-vX.X.X.zip` 到 `/opt/` 目录。
-
-### 1.2 解压项目
-
-在 1Panel 终端中执行：
 ```bash
 cd /opt
-unzip multi-shop-link-vX.X.X.zip -d multi-shop-link
+git clone https://github.com/MingTu01/multi-shop-link-deploy.git
+cd multi-shop-link-deploy
 ```
 
-### 1.3 创建 Node 运行环境
+### 1.2 启动容器
 
-1. 1Panel → **运行环境** → **Node.js**
-2. 点击 **创建运行环境**
-3. 配置：
-   - 版本：选择 **18.x** 或 **22.x**
-   - 源码目录：`/opt/multi-shop-link/apps/server`
-   - 启动命令：`node --import tsx src/index.ts`
-   - 端口：`3001`
-4. 点击 **确定**，1Panel 自动安装依赖并启动
+```bash
+docker-compose up -d --build
+```
 
-### 1.4 配置反向代理
+### 1.3 验证
 
-1. 1Panel → **网站** → **反向代理**
-2. 创建反向代理：
-   - 名称：`multi-shop-link`
-   - 目标 URL：`http://127.0.0.1:3001`
-   - 域名：填写你的域名
-3. 保存后等待 SSL 证书自动签发
+```bash
+docker logs multi-shop-link --tail 20
+```
 
-### 1.5 验证部署
-
-浏览器访问 `https://你的域名`
-
-**默认管理员账号：**
-- 账号：`admin`
-- 密码：`123456`
-
-登录后请立即修改默认密码。
+默认管理员：admin / 123456
 
 ---
 
-## 二、升级部署
+## 二、在线升级（推荐）
 
-### 2.1 通过 Web 界面升级（推荐）
+在管理页面 → 系统设置 → 系统升级 → 点击"检查更新"。
 
-1. 管理员登录 → 系统设置 → 系统升级
-2. 选择升级方式：
-   - **在线更新**：系统自动检查并下载新版本
-   - **ZIP 升级**：手动上传升级包
-3. 等待进度完成 → 确认刷新
-
-详见 [UPGRADE.md](./UPGRADE.md)
-
-### 2.2 通过 1Panel 手动升级
-
-1. 1Panel → **运行环境** → 停止 Multi Shop Link
-2. 1Panel → **文件管理** → 上传新的升级包 ZIP
-3. 备份数据库：
-   ```bash
-   cp /opt/multi-shop-link/apps/server/data/store.db /opt/multi-shop-link/backups/store.db.bak
-   ```
-4. 解压覆盖：
-   ```bash
-   cd /opt
-   unzip -o multi-shop-link-upgrade-vX.X.X.zip -d multi-shop-link
-   ```
-5. 1Panel → **运行环境** → 启动 Multi Shop Link
+系统会自动从部署仓库拉取最新版本并重启。
 
 ---
 
-## 三、数据备份与恢复
+## 三、手动升级（ZIP 方式）
 
-### 3.1 自动备份
-
-系统内置自动备份：
-1. 管理员 → 系统设置 → 数据备份
-2. 开启自动备份，选择频率（每小时/每天/每周）
-3. 设置保留份数
-
-### 3.2 手动备份
-
-系统设置 → 数据备份 → 立即备份 → 下载 ZIP
-
-### 3.3 数据恢复
-
-系统设置 → 数据备份 → 选择备份 → 恢复 → 确认
+1. 从 GitHub Releases 下载升级包
+2. 在管理页面 → 系统设置 → 系统升级 → ZIP 升级
+3. 上传 ZIP 文件，系统自动备份、解压、替换、重启
 
 ---
 
-## 四、消息推送配置
+## 四、环境变量
 
-### 4.1 企业微信自建应用（推荐）
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| PORT | 服务端口 | 3001 |
+| CORS_ORIGIN | 允许的跨域来源 | *（允许所有） |
 
-1. 企业微信管理后台 → 应用管理 → 自建 → 创建应用
-2. 获取：CorpID、AgentID、Secret、UserID
-3. 系统设置 → 消息推送 → 企业微信 → 填写配置 → 测试
-
-### 4.2 PushPlus
-
-系统设置 → 消息推送 → PushPlus → 填写 Token → 测试
-
-### 4.3 Server酱
-
-系统设置 → 消息推送 → Server酱 → 填写 SendKey → 测试
+如需限制跨域，设置：`CORS_ORIGIN=https://your-domain.com`
 
 ---
 
-## 五、PWA 安装（手机端）
+## 五、数据目录
 
-1. 手机浏览器访问系统地址
-2. 点击浏览器菜单 → "添加到主屏幕" / "安装应用"
-3. 桌面出现应用图标，打开后为全屏原生体验
-
----
-
-## 六、常用运维（通过 1Panel）
-
-| 操作 | 路径 |
+| 路径 | 说明 |
 |------|------|
-| 启动/停止/重启 | 1Panel → 运行环境 → 操作按钮 |
-| 查看日志 | 1Panel → 运行环境 → 日志 |
-| 安装模块 | 1Panel → 运行环境 → 模块管理 |
-| 文件管理 | 1Panel → 文件 |
-| 域名/SSL | 1Panel → 网站 |
-| 数据库备份 | 系统设置 → 数据备份 |
+| /app/data | 数据库 + 配置文件 |
+| /app/uploads | 上传的图片 |
+| /app/backups | 自动备份 |
+| /app/public/web-dist | 前端静态文件 |
 
 ---
 
-## 七、故障排查
+## 六、版本规范
 
-| 问题 | 解决方案 |
-|------|----------|
-| 页面白屏 | 1Panel → 运行环境 → 重启 |
-| 端口被占用 | 1Panel → 终端 → `lsof -i :3001` |
-| 数据库锁定 | `sqlite3 apps/server/data/store.db "PRAGMA wal_checkpoint(TRUNCATE);"` |
-| 图片上传失败 | 检查 `apps/server/uploads` 目录权限 |
-| 推送失败 | 检查网络是否能访问企业微信 API |
-
----
-
-## 八、安全建议
-
-1. **修改默认密码**：首次登录后立即修改
-2. **HTTPS**：通过 1Panel 配置 SSL 证书
-3. **防火墙**：仅开放 80/443 端口
-4. **定期备份**：配置自动备份
-5. **系统更新**：及时更新到最新版本
+- 版本格式：v主版本.次版本.修订号（如 v1.4.2）
+- 当前阶段：v1.0.0 正式版已部署
+- 次版本号：新增功能时递增
+- 修订号：Bug 修复时递增
+- 未经管理员确认，禁止将主版本号升到 2.0.0 或更高
