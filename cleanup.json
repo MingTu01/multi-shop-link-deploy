@@ -1,14 +1,19 @@
 {
   "version": "2026-06-28",
-  "description": "Auto-cleanup: 7 files removed",
+  "description": "Auto-cleanup: 12 files removed",
   "deleteFiles": [
-    "public/web-dist/assets/App-AmyYWbOc.js",
-    "public/web-dist/assets/StoreDividendsPage-N8mhwjm6.js",
-    "public/web-dist/assets/StoreEntriesPage-DZu2pQaM.js",
-    "public/web-dist/assets/StoreInventoryPage-D8EbNxGF.js",
-    "public/web-dist/assets/StorePurchasePage-D7QJFJzf.js",
-    "public/web-dist/assets/StoreShiftsPage-CPEZk8-0.js",
-    "public/web-dist/assets/index-Cz23jsM7.js"
+    "public/web-dist/assets/AdminSettingsPage-B5iQqvC2.js",
+    "public/web-dist/assets/App-yrCOSnXc.js",
+    "public/web-dist/assets/NotificationsPage-DTLFtSpL.js",
+    "public/web-dist/assets/PushSettingsButton-Bwz0RPnx.js",
+    "public/web-dist/assets/StoreAccountPage-CCgibcPg.js",
+    "public/web-dist/assets/StoreInventoryPage-uJ_UZmxJ.js",
+    "public/web-dist/assets/StoreNotificationsPage-DuheQpUf.js",
+    "public/web-dist/assets/StorePayrollPage-DAIDa9Ru.js",
+    "public/web-dist/assets/StoreSettingsPage-CO-IP_xr.js",
+    "public/web-dist/assets/StoreShiftsPage-C-SLbL4v.js",
+    "public/web-dist/assets/StoreStaffPage-B4DDp1Hh.js",
+    "public/web-dist/assets/index-Di5N9Fpz.js"
   ],
   "deleteDirs": []
 }
