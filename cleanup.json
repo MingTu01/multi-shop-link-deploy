@@ -1,10 +1,6 @@
 {
   "version": "2026-06-28",
-  "description": "Auto-cleanup: 3 files removed",
-  "deleteFiles": [
-    "public/web-dist/assets/App-D3w2N8vF.js",
-    "public/web-dist/assets/StorePayrollPage-2ofDAeNo.js",
-    "public/web-dist/assets/index-RJHjES6O.js"
-  ],
+  "description": "No files to clean",
+  "deleteFiles": [],
   "deleteDirs": []
 }
