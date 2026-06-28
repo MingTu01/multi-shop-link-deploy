@@ -1,17 +1,15 @@
 {
   "version": "2026-06-28",
-  "description": "Auto-cleanup: 10 files removed",
+  "description": "Auto-cleanup: 8 files removed",
   "deleteFiles": [
-    "public/web-dist/assets/AdminSettingsPage-Cg3m35lP.js",
-    "public/web-dist/assets/App-m1Mpyio4.js",
-    "public/web-dist/assets/NotificationsPage-BM1I6n6b.js",
-    "public/web-dist/assets/PushSettingsButton-MVpu1OtQ.js",
-    "public/web-dist/assets/StoreAccountPage-Be717oeq.js",
-    "public/web-dist/assets/StoreNotificationsPage-CPGK7Vun.js",
-    "public/web-dist/assets/dist-CDBlBIbr.js",
-    "public/web-dist/assets/esm-Dt3QmuRQ.js",
-    "public/web-dist/assets/esm-DwUa3hwd.js",
-    "public/web-dist/assets/index-CUPAk933.js"
+    "public/web-dist/assets/AdminSettingsPage-BWOGVW9H.js",
+    "public/web-dist/assets/App-CVsxkqwe.js",
+    "public/web-dist/assets/NotificationsPage-DWGva1tj.js",
+    "public/web-dist/assets/PushSettingsButton-D4LeQtB0.js",
+    "public/web-dist/assets/StoreAccountPage-CP6iDtO7.js",
+    "public/web-dist/assets/StoreNotificationsPage-CbUgmJcm.js",
+    "public/web-dist/assets/esm-BfnECNQW.js",
+    "public/web-dist/assets/index-DvWCyBYs.js"
   ],
   "deleteDirs": []
 }
