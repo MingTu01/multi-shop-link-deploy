@@ -26,7 +26,7 @@ export function requestLogger(req: Request, res: Response, next: NextFunction) {
     const logData = {
       requestId,
       method: req.method,
-      path: req.path,
+      path: req.originalUrl.split('?')[0],
       status: res.statusCode,
       duration: duration + 'ms',
       userId: (req as any).user?.id,
@@ -35,7 +35,8 @@ export function requestLogger(req: Request, res: Response, next: NextFunction) {
 
     // Only log errors and slow requests, skip successful requests
     // Skip 401 for auth endpoints (expected during login check)
-    const isAuthEndpoint = req.path.includes('/auth/') || req.path.includes('/unread-count') || req.path === '/info' || req.path === '/health';
+    const reqPath = req.originalUrl.split('?')[0];
+    const isAuthEndpoint = reqPath.startsWith('/api/auth/') || reqPath.includes('/unread-count') || reqPath === '/api/health';
     if (res.statusCode >= 500) {
       logger.error(logData, 'request error');
     } else if (res.statusCode >= 400 && !(res.statusCode === 401 && isAuthEndpoint)) {

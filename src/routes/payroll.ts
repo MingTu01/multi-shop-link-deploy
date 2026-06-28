@@ -12,18 +12,30 @@ router.get('/', (req: AuthRequest, res: Response) => {
     const storeId = req.params.storeId;
     const { page, pageSize } = req.query;
     const p = parseInt(page as string) || 1;
-    const ps = parseInt(pageSize as string) || 20;
+    const ps = Math.min(parseInt(pageSize as string) || 20, 100);
     const offset = (p - 1) * ps;
     const canSeeAll = req.user.role !== 'STAFF';
     const isStaff = req.user.role === 'STAFF';
     const total = (db.prepare('SELECT COUNT(*) as count FROM payroll WHERE store_id = ?').get(storeId) as any).count;
     const payrolls = db.prepare('SELECT * FROM payroll WHERE store_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?').all(storeId, ps, offset);
+    // Batch query to avoid N+1
+    const _prIds = payrolls.map((pr: any) => pr.id);
+    let _allItems: any[] = [];
+    if (_prIds.length > 0) {
+      const _ph = _prIds.map(() => '?').join(',');
+      _allItems = db.prepare('SELECT pi.*, u.name as user_display_name, u.username, u.avatar, u.job_title as user_job_title FROM payroll_items pi LEFT JOIN users u ON pi.user_id=u.id WHERE pi.payroll_id IN (' + _ph + ')').all(..._prIds);
+    }
+    const _itemsMap = new Map<number, any[]>();
+    for (const item of _allItems) {
+      if (!_itemsMap.has(item.payroll_id)) _itemsMap.set(item.payroll_id, []);
+      _itemsMap.get(item.payroll_id)!.push(item);
+    }
     const enriched = payrolls.map((pr: any) => {
       let items;
       if (canSeeAll) {
-        items = db.prepare('SELECT pi.*, u.name as user_display_name, u.username, u.avatar, u.job_title as user_job_title FROM payroll_items pi LEFT JOIN users u ON pi.user_id=u.id WHERE pi.payroll_id = ?').all(pr.id);
+        items = _itemsMap.get(pr.id) || [];
       } else {
-        items = db.prepare('SELECT pi.*, u.name as user_display_name, u.username, u.avatar, u.job_title as user_job_title FROM payroll_items pi LEFT JOIN users u ON pi.user_id=u.id WHERE pi.payroll_id = ? AND pi.user_id = ?').all(pr.id, req.user.id);
+        items = _itemsMap.get(pr.id) || [];
       }
       // For STAFF, override total_amount with their own sum only
       let payrollData: any = { ...pr, items };
@@ -35,9 +47,9 @@ router.get('/', (req: AuthRequest, res: Response) => {
       }
       return payrollData;
     }).filter((pr: any) => canSeeAll || pr.items.length > 0);
-    res.json({ payrolls: enriched, total, page: p, pageSize: ps });
+    res.json({ success: true, data: enriched, pagination: { page: p, pageSize: ps, total } });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: process.env.NODE_ENV === "production" ? "�������ڲ�����" : err.message });
   }
 });
 
@@ -65,9 +77,9 @@ router.post('/', (req: AuthRequest, res: Response) => {
       }
     });
     tx();
-    res.json({ id: payrollId, message: '工资单创建成功' });
+    res.json({ success: true, data: { id: payrollId }, message: '工资单创建成功' });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: process.env.NODE_ENV === "production" ? "�������ڲ�����" : err.message });
   }
 });
 
@@ -94,9 +106,9 @@ router.put('/:id', (req: AuthRequest, res: Response) => {
       }
     });
     tx();
-    res.json({ message: '工资单更新成功' });
+    res.json({ success: true, data: null, message: '工资单更新成功' });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: process.env.NODE_ENV === "production" ? "�������ڲ�����" : err.message });
   }
 });
 
@@ -162,8 +174,8 @@ router.post('/generate', (req: AuthRequest, res: Response) => {
       operatorName: req.user.name || req.user.username
     });
 
-    res.json({ id: payrollId, message: '工资单生成成功' });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+    res.json({ success: true, data: { id: payrollId }, message: '工资单生成成功' });
+  } catch (err: any) { res.status(500).json({ error: process.env.NODE_ENV === "production" ? "�������ڲ�����" : err.message }); }
 });
 
 // PUT /:id/confirm
@@ -204,9 +216,9 @@ router.put('/:id/confirm', (req: AuthRequest, res: Response) => {
       }
     }
 
-    res.json({ message: '工资单已确认' });
+    res.json({ success: true, data: null, message: '工资单已确认' });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: process.env.NODE_ENV === "production" ? "�������ڲ�����" : err.message });
   }
 });
 
@@ -222,9 +234,9 @@ router.delete('/:id', (req: AuthRequest, res: Response) => {
       db.prepare('DELETE FROM payroll WHERE id = ?').run(req.params.id);
     });
     tx();
-    res.json({ message: '工资单已删除' });
+    res.json({ success: true, data: null, message: '工资单已删除' });
   } catch (err: any) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: process.env.NODE_ENV === "production" ? "�������ڲ�����" : err.message });
   }
 });
 

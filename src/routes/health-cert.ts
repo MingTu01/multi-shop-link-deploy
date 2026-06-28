@@ -5,7 +5,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const BASE_DIR = join(__dirname, '..', '..');
 import { join, resolve } from 'path';
-import { existsSync, mkdirSync, renameSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync } from 'fs';
 import multer from 'multer';
 import db from '../db.js';
 import { AuthRequest } from '../auth.js';
@@ -13,10 +13,23 @@ import { isAdmin } from '../lib/roles.js';
 import { localDate } from '../lib/utils.js';
 import { triggerNotification } from '../notify-trigger.js';
 import { getAliyunOCRConfig, isAliyunOCRConfigured, saveAliyunCredentials, reloadAliyunOCRConfig } from '../lib/aliyun-ocr.js';
+import logger from '../../logger.js';
 
 const router = Router();
 const upload = multer({
-  dest: join(BASE_DIR, 'uploads'),
+  storage: multer.diskStorage({
+    destination: (_req: any, _file: any, cb: any) => {
+      const destDir = join(BASE_DIR, 'uploads');
+      if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
+      cb(null, destDir);
+    },
+    filename: (req: any, file: any, cb: any) => {
+      const mimeExtMap: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp' };
+      const ext = mimeExtMap[file.mimetype] || file.originalname.split('.').pop() || 'jpg';
+      const newName = 'health_' + req.user.id + '_' + Date.now() + '.' + ext;
+      cb(null, newName);
+    }
+  }),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (_req: any, file: any, cb: any) => {
     const allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
@@ -29,15 +42,9 @@ router.post('/upload', upload.single('file'), (req: AuthRequest, res: Response) 
   try {
     const file = (req as any).file;
     if (!file) return res.status(400).json({ error: '请选择文件' });
-    // Determine extension from MIME type for security
-    const mimeExtMap: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp' };
-    const ext = mimeExtMap[file.mimetype] || file.originalname.split('.').pop() || 'jpg';
-    const newName = 'health_' + req.user.id + '_' + Date.now() + '.' + ext;
-    const destDir = join(BASE_DIR, 'uploads');
-    if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
-    renameSync(file.path, join(destDir, newName));
-    res.json({ url: '/uploads/' + newName, filename: newName });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+    const filename = file.filename;
+    res.json({ url: '/uploads/' + filename, filename });
+  } catch (err: any) { res.status(500).json({ error: process.env.NODE_ENV === "production" ? "系统内部错误" : err.message }); }
 });
 
 // POST /ocr - 阿里云 OCR 识别健康证
@@ -92,7 +99,7 @@ router.post('/ocr', async (req: AuthRequest, res: Response) => {
       if (errMsg.includes('AccessKey') || errMsg.includes('InvalidAccessKey')) {
         return res.status(500).json({ error: '阿里云认证失败，请检查 AccessKey 配置' });
       }
-      console.error("[OCR] API Error:", errMsg); return res.status(500).json({ error: 'OCR 识别失败: ' + (errMsg.length > 200 ? errMsg.slice(0, 200) + '...' : errMsg) });
+      logger.error("[OCR] API Error:", errMsg); return res.status(500).json({ error: 'OCR 识别失败: ' + (errMsg.length > 200 ? errMsg.slice(0, 200) + '...' : errMsg) });
     }
 
     // 解析 OCR 结果 — recognizeGeneralStructure 返回结构化 KV 数据
@@ -156,7 +163,7 @@ router.post('/ocr', async (req: AuthRequest, res: Response) => {
     }
     const realDaysLeft = realExpiryStr ? Math.ceil((new Date(realExpiryStr).getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : -1;
 
-    console.log("[OCR] Parsed: name=[" + ocrName + "] expiry=[" + ocrExpiry + "] kvKeys=" + Object.keys(kvData).join(","));
+    logger.info("[OCR] Parsed: name=[" + ocrName + "] expiry=[" + ocrExpiry + "] kvKeys=" + Object.keys(kvData).join(","));
     res.json({
       ocrName,
       ocrExpiry,
@@ -168,7 +175,7 @@ router.post('/ocr', async (req: AuthRequest, res: Response) => {
       provider: 'aliyun',
     });
   } catch (err: any) {
-    console.error('[OCR] Error:', err.message);
+    logger.error('[OCR] Error:', err.message);
     res.status(500).json({ error: 'OCR 识别异常，请稍后重试' });
   }
 });
@@ -226,7 +233,7 @@ router.put('/save', (req: AuthRequest, res: Response) => {
       }
     }
     res.json({ message: '健康证信息已保存' });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+  } catch (err: any) { res.status(500).json({ error: process.env.NODE_ENV === "production" ? "�������ڲ�����" : err.message }); }
 });
 
 router.get('/', (req: AuthRequest, res: Response) => {
@@ -241,7 +248,7 @@ router.get('/', (req: AuthRequest, res: Response) => {
         verified: !!user.health_cert_verified
       }
     });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+  } catch (err: any) { res.status(500).json({ error: process.env.NODE_ENV === "production" ? "�������ڲ�����" : err.message }); }
 });
 
 router.get('/check-expiry', (req: AuthRequest, res: Response) => {
@@ -254,7 +261,7 @@ router.get('/check-expiry', (req: AuthRequest, res: Response) => {
       return { ...u, daysLeft, status: daysLeft <= 0 ? 'expired' : daysLeft <= 30 ? 'warning' : 'valid' };
     });
     res.json({ results });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+  } catch (err: any) { res.status(500).json({ error: process.env.NODE_ENV === "production" ? "�������ڲ�����" : err.message }); }
 });
 
 export default router;

@@ -24,8 +24,8 @@ router.get('/stats', (req: AuthRequest, res: Response) => {
     const today = localDate();
     const income = (db.prepare("SELECT COALESCE(SUM(amount),0) as total FROM entries WHERE store_id=? AND type IN ('收入','income') AND date=?").get(storeId, today) as any)?.total || 0;
     const expense = (db.prepare("SELECT COALESCE(SUM(amount),0) as total FROM entries WHERE store_id=? AND type IN ('支出','expense') AND date=?").get(storeId, today) as any)?.total || 0;
-    res.json({ income, expense, profit: income - expense });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+    res.json({ success: true, data: { income, expense, profit: income - expense } });
+  } catch (err: any) { res.status(500).json({ error: process.env.NODE_ENV === "production" ? "�������ڲ�����" : err.message }); }
 });
 
 router.get('/', (req: AuthRequest, res: Response) => {
@@ -33,7 +33,7 @@ router.get('/', (req: AuthRequest, res: Response) => {
     const { storeId } = req.params;
     const { date, dateFrom, dateTo, month, year, week, period, limit, page, pageSize } = req.query;
     const p = parseInt(page as string) || 1;
-    const ps = parseInt(pageSize as string) || 20;
+    const ps = Math.min(parseInt(pageSize as string) || 20, 100);
     const offset = (p - 1) * ps;
     let whereClause = ' WHERE e.store_id=?';
     const params: any[] = [storeId];
@@ -44,11 +44,11 @@ router.get('/', (req: AuthRequest, res: Response) => {
     if (user.role?.toUpperCase() === 'STAFF') whereClause += ' AND e.is_system=0';
     if (period === 'day') { whereClause += ' AND e.date=?'; params.push(localDate()); }
     else if (period === 'week') { const d = new Date(); const s = new Date(d); s.setDate(d.getDate()-d.getDay()+1); const e = new Date(s); e.setDate(s.getDate()+6); whereClause += ' AND e.date>=? AND e.date<=?'; params.push(localDate(s), localDate(e)); }
-    else if (period === 'month') { whereClause += " AND strftime('%Y-%m',e.date)=?"; params.push(localDate().slice(0,7)); }
+    else if (period === 'month') { const m = localDate().slice(0,7); whereClause += " AND e.date >= ? AND e.date < ?"; params.push(m + '-01'); params.push(m + '-32'); }
     else if (period === 'year') { whereClause += " AND strftime('%Y',e.date)=?"; params.push(new Date().getFullYear().toString()); }
     if (date) { whereClause += ' AND e.date=?'; params.push(date); }
     if (dateFrom && dateTo) { whereClause += ' AND e.date>=? AND e.date<=?'; params.push(dateFrom, dateTo); }
-    if (month) { whereClause += " AND strftime('%Y-%m',e.date)=?"; params.push(month); }
+    if (month) { whereClause += " AND e.date >= ? AND e.date < ?"; params.push(month + '-01'); params.push(month + '-32'); }
     if (year) { whereClause += " AND strftime('%Y',e.date)=?"; params.push(year); }
     if (week) { const d = new Date(week as string); const s = new Date(d); s.setDate(d.getDate()-d.getDay()+1); const e = new Date(s); e.setDate(s.getDate()+6); whereClause += ' AND e.date>=? AND e.date<=?'; params.push(localDate(s), localDate(e)); }
     const total = (db.prepare('SELECT COUNT(*) as count FROM entries e' + whereClause).get(...params) as any).count;
@@ -56,8 +56,8 @@ router.get('/', (req: AuthRequest, res: Response) => {
     let sql = 'SELECT e.*, COALESCE(c.name, e.category) AS category_name, u.name AS creator_name FROM entries e LEFT JOIN categories c ON e.category_id = c.id LEFT JOIN users u ON e.created_by = u.id' + whereClause + ' ORDER BY e.created_at DESC';
     if (!page && limit) { sql += ' LIMIT ?'; qp.push(Number(limit)); } else { sql += ' LIMIT ? OFFSET ?'; qp.push(ps, offset); }
     const totalPages = Math.ceil(total / ps);
-    res.json({ data: db.prepare(sql).all(...qp), total, page: p, pageSize: ps, totalPages });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+    res.json({ success: true, data: db.prepare(sql).all(...qp), pagination: { page: p, pageSize: ps, total, totalPages } });
+  } catch (err: any) { res.status(500).json({ error: process.env.NODE_ENV === "production" ? "�������ڲ�����" : err.message }); }
 });
 
 router.post('/', (req: AuthRequest, res: Response) => {
@@ -66,6 +66,7 @@ router.post('/', (req: AuthRequest, res: Response) => {
     if (isReadonly(user.role)) return res.status(403).json({ error: '员工无权新增记账' });
     const { storeId } = req.params;
     const { type, category, category_id, amount, note, date } = req.body;
+    if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: '日期格式不正确' });
     if (amount === undefined || amount === null || isNaN(Number(amount))) return res.status(400).json({ error: '请输入有效金额' });
     if (Number(amount) < 0) return res.status(400).json({ error: '金额不能为负数' });
     if (Number(amount) > 9999999) return res.status(400).json({ error: '金额不能超过999万' });
@@ -84,8 +85,8 @@ router.post('/', (req: AuthRequest, res: Response) => {
     , operatorName: req.user.name || req.user.username});
 
     eventBus.broadcast({ type: 'entry', action: 'create', storeId, data: { id: result.lastInsertRowid } });
-    res.json({ id: result.lastInsertRowid, success: true });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+    res.json({ success: true, data: { id: result.lastInsertRowid } });
+  } catch (err: any) { res.status(500).json({ error: process.env.NODE_ENV === "production" ? "�������ڲ�����" : err.message }); }
 });
 
 // S12: PUT 添加记录归属校验
@@ -104,7 +105,7 @@ router.put('/:id', (req: AuthRequest, res: Response) => {
     let catId = category_id || null;
     if (catId) { const cat = db.prepare('SELECT name FROM categories WHERE id = ?').get(catId) as any; if (cat) categoryName = cat.name; }
     const nt = normalizeType(type);
-    db.prepare('UPDATE entries SET type=?,category=?,category_id=?,amount=?,note=?,date=? WHERE id=?').run(nt, categoryName, catId, amount, sanitizeNote(note||''), date, req.params.id);
+    db.prepare('UPDATE entries SET type=?,category=?,category_id=?,amount=?,note=?,date=?,updated_at=datetime(\'now\',\'localtime\') WHERE id=?').run(nt, categoryName, catId, amount, sanitizeNote(note||''), date, req.params.id);
     const before = original ? { type: original.type, category: original.category || '未分类', amount: original.amount, note: original.note || '', date: original.date } : null;
     const after = { type: nt, category: categoryName || '未分类', amount: Number(amount), note: note || '', date };
     opLog(user.id, storeId, '记账', JSON.stringify({ action: 'modify', id: req.params.id, before, after }), req.ip);
@@ -117,8 +118,8 @@ router.put('/:id', (req: AuthRequest, res: Response) => {
     , operatorName: req.user.name || req.user.username});
 
     eventBus.broadcast({ type: 'entry', action: 'update', storeId, data: { id: req.params.id } });
-    res.json({ success: true });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+    res.json({ success: true, data: null });
+  } catch (err: any) { res.status(500).json({ error: process.env.NODE_ENV === "production" ? "�������ڲ�����" : err.message }); }
 });
 
 // S12: DELETE 添加记录归属校验
@@ -146,8 +147,8 @@ router.delete('/:id', (req: AuthRequest, res: Response) => {
     , operatorName: req.user.name || req.user.username});
 
     eventBus.broadcast({ type: 'entry', action: 'delete', storeId, data: { id: req.params.id } });
-    res.json({ success: true });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+    res.json({ success: true, data: null });
+  } catch (err: any) { res.status(500).json({ error: process.env.NODE_ENV === "production" ? "�������ڲ�����" : err.message }); }
 });
 
 export default router;

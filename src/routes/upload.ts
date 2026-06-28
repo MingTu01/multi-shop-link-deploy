@@ -7,6 +7,7 @@ import multer from 'multer';
 import crypto from 'crypto';
 import db from '../db.js';
 import { AuthRequest } from '../auth.js';
+import { isStoreAdmin } from '../lib/roles.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -57,10 +58,13 @@ router.post('/:type', upload.single('file'), (req: AuthRequest, res: Response) =
     if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
     writeFileSync(join(uploadDir, filename), file.buffer);
     res.json({ url: '/uploads/' + type + '/' + filename, filename });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+  } catch (err: any) { res.status(500).json({ error: process.env.NODE_ENV === "production" ? "�������ڲ�����" : err.message }); }
 });
 
 router.delete('/', (req: AuthRequest, res: Response) => {
+    if (!isStoreAdmin(req.user.role)) {
+      return res.status(403).json({ error: '无权限删除文件' });
+    }
   try {
     const { url } = req.body;
     if (!url || !url.startsWith('/uploads/')) return res.status(400).json({ error: '无效的文件路径' });
@@ -69,7 +73,7 @@ router.delete('/', (req: AuthRequest, res: Response) => {
     if (!filePath.startsWith(uploadsDir + path.sep) && filePath !== uploadsDir) return res.status(400).json({ error: '路径不合法' });
     if (existsSync(filePath)) unlinkSync(filePath);
     res.json({ message: '文件已删除' });
-  } catch (err: any) { res.status(500).json({ error: err.message }); }
+  } catch (err: any) { res.status(500).json({ error: process.env.NODE_ENV === "production" ? "�������ڲ�����" : err.message }); }
 });
 
 export default router;
