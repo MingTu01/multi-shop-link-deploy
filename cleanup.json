@@ -1,6 +1,9 @@
 {
   "version": "2026-06-28",
-  "description": "No files to clean",
-  "deleteFiles": [],
+  "description": "Auto-cleanup: 2 files removed",
+  "deleteFiles": [
+    "public/web-dist/assets/App-p0ZxzNnw.js",
+    "public/web-dist/assets/index-DrLJ87aj.js"
+  ],
   "deleteDirs": []
 }
