@@ -1,32 +1,10 @@
 {
   "version": "2026-06-28",
-  "description": "Auto-cleanup: 25 files removed",
+  "description": "Auto-cleanup: 3 files removed",
   "deleteFiles": [
-    "public/web-dist/assets/AdminSettingsPage-3ct1yXc2.js",
-    "public/web-dist/assets/App-DImNU6ex.js",
-    "public/web-dist/assets/DashboardPage-5XRDSVxq.js",
-    "public/web-dist/assets/GlassCard-tkpZG5X2.js",
-    "public/web-dist/assets/NotificationsPage-D_sHaKmo.js",
-    "public/web-dist/assets/PageHeader-BNcWy17_.js",
-    "public/web-dist/assets/PasswordPage-pQQpBuVD.js",
-    "public/web-dist/assets/PushSettingsButton-h8FM8GBO.js",
-    "public/web-dist/assets/SettingsPage-5fbPHvy5.js",
-    "public/web-dist/assets/StoreAccountPage-D9VPCpPq.js",
-    "public/web-dist/assets/StoreDividendsPage-vzoqWray.js",
-    "public/web-dist/assets/StoreEntriesPage-BDArudIo.js",
-    "public/web-dist/assets/StoreInventoryPage-B81WGJbJ.js",
-    "public/web-dist/assets/StoreLogsPage-V1xM4Y8a.js",
-    "public/web-dist/assets/StoreNotificationsPage-Wsj8-8dM.js",
-    "public/web-dist/assets/StoreOverviewPage-tdRdRxhy.js",
-    "public/web-dist/assets/StorePayrollPage-DnQh9YJy.js",
-    "public/web-dist/assets/StorePurchasePage-0yl-Z2ZG.js",
-    "public/web-dist/assets/StoreReportPage-BohH2ial.js",
-    "public/web-dist/assets/StoreSettingsPage-DeAKvBai.js",
-    "public/web-dist/assets/StoreShiftsPage-BR1LE5Sa.js",
-    "public/web-dist/assets/StoreStaffPage-B9v3_aqy.js",
-    "public/web-dist/assets/StoresPage-D8pjB_fD.js",
-    "public/web-dist/assets/data-CHiteXXU.js",
-    "public/web-dist/assets/index-BAGiVCsB.js"
+    "public/web-dist/assets/App-DCzP7n4h.js",
+    "public/web-dist/assets/SettingsPage-BSyfcCaw.js",
+    "public/web-dist/assets/index-jDZuxyw4.js"
   ],
   "deleteDirs": []
 }
