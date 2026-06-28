@@ -1,6 +1,27 @@
 {
   "version": "2026-06-28",
-  "description": "No files to clean",
-  "deleteFiles": [],
+  "description": "Auto-cleanup: 20 files removed",
+  "deleteFiles": [
+    "public/web-dist/assets/AdminSettingsPage-Cu8RnAoH.js",
+    "public/web-dist/assets/App-TpX848CH.js",
+    "public/web-dist/assets/DashboardPage-CQd-x-FR.js",
+    "public/web-dist/assets/NotificationsPage-CqEOotlI.js",
+    "public/web-dist/assets/PasswordPage-D09FF7O0.js",
+    "public/web-dist/assets/PushSettingsButton-DRMmw89f.js",
+    "public/web-dist/assets/StoreAccountPage-C_-a4Z10.js",
+    "public/web-dist/assets/StoreDividendsPage-BzOiHMF7.js",
+    "public/web-dist/assets/StoreEntriesPage-uo7B6xWi.js",
+    "public/web-dist/assets/StoreInventoryPage-DdYwf8Vk.js",
+    "public/web-dist/assets/StoreNotificationsPage-DwRZhb_y.js",
+    "public/web-dist/assets/StoreOverviewPage-DHVFByCF.js",
+    "public/web-dist/assets/StorePayrollPage-CJBH0v1I.js",
+    "public/web-dist/assets/StorePurchasePage-CDsCyjs2.js",
+    "public/web-dist/assets/StoreReportPage-xl1ma53X.js",
+    "public/web-dist/assets/StoreSettingsPage-Duz_3M4V.js",
+    "public/web-dist/assets/StoreShiftsPage-DI2p9Ua-.js",
+    "public/web-dist/assets/StoreStaffPage-D6ijNlb8.js",
+    "public/web-dist/assets/data-C1sr-_8y.js",
+    "public/web-dist/assets/index-DXBO7as8.js"
+  ],
   "deleteDirs": []
 }
