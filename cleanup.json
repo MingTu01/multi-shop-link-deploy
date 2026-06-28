@@ -1,6 +1,19 @@
 {
   "version": "2026-06-28",
-  "description": "No files to clean",
-  "deleteFiles": [],
+  "description": "Auto-cleanup: 12 files removed",
+  "deleteFiles": [
+    "public/web-dist/assets/AdminSettingsPage-BdK2ubDv.js",
+    "public/web-dist/assets/App--ZBPW_RS.js",
+    "public/web-dist/assets/ImagePreview-BGYFH3FG.js",
+    "public/web-dist/assets/StoreAccountPage-DQIm5h-N.js",
+    "public/web-dist/assets/StoreInventoryPage-2JL9_iaI.js",
+    "public/web-dist/assets/StorePayrollPage-RMvADPlT.js",
+    "public/web-dist/assets/StoreSettingsPage-DplQCFnW.js",
+    "public/web-dist/assets/StoreShiftsPage-5ehWzqkw.js",
+    "public/web-dist/assets/StoreStaffPage-CsxTHJso.js",
+    "public/web-dist/assets/StoresPage-YL7pdBRq.js",
+    "public/web-dist/assets/esm-u03cWlXZ.js",
+    "public/web-dist/assets/index-DTX_9hts.js"
+  ],
   "deleteDirs": []
 }

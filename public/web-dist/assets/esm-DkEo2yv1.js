@@ -1,0 +1,2 @@
+const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=["assets/web-CoMCSr-4.js","assets/dist-CXkn6QDR.js"])))=>i.map(i=>d[i]);
+import{p as e}from"./vendor-react-fPO6gwnG.js";import{n as t}from"./dist-CXkn6QDR.js";var n=t(`App`,{web:()=>e(()=>import(`./web-CoMCSr-4.js`).then(e=>new e.AppWeb),__vite__mapDeps([0,1]))});export{n as App};
