@@ -1,6 +1,6 @@
 import db from './db.js';
 import { ROLES } from './lib/roles.js';
-import { sendNotification } from './notify.js';
+import { sendNotification, getUserPushSettings } from './notify.js';
 import { sendPushNotification } from './push-notify.js';
 import { eventBus } from './event-bus.js';
 import logger from './logger.js';
@@ -13,6 +13,7 @@ interface NotifyParams {
   storeId?: string;
   detail?: string;
   targetUserId?: number;
+  operatorName?: string;
 }
 
 // 带指数退避的重试机制
@@ -37,6 +38,10 @@ function getNotifyTitle(type: NotifyType): string {
     staff: '员工通知',
     store: '门店通知',
     purchase: '进货通知',
+    salary_confirm: '工资确认',
+    staff_change: '人员变动',
+    inventory_alert: '库存预警',
+    store_alert: '门店预警',
   };
   return titles[type] || '系统通知';
 }
@@ -60,12 +65,17 @@ function getTargetUsers(type: NotifyType, storeId?: string, targetUserId?: numbe
     }
   }
 
+  if (type === 'payroll') {
+    const staffs = db.prepare('SELECT id FROM users WHERE role = ? AND status = ?').all(ROLES.STAFF, 'active') as any[];
+    staffs.forEach((u: any) => userIds.push(u.id));
+  }
+
   return [...new Set(userIds)];
 }
 
 export function triggerNotification(params: NotifyParams): void {
   try {
-    const { type, action, storeId, detail, targetUserId, operatorName } = params as any;
+    const { type, action, storeId, detail, targetUserId, operatorName } = params;
     const title = getNotifyTitle(type);
     const operator = operatorName ? '[' + operatorName + '] ' : '';
     const content = operator + action + (detail ? ': ' + detail : '');
@@ -94,11 +104,26 @@ export function triggerNotification(params: NotifyParams): void {
     for (const uid of targets) {
       stmt.run(uid, title, content, type, storeId || '', link, now);
     }
-    // External push (with retry)
-    withRetry(() => sendNotification(title, content, type), 'sendNotification');
+    // External push (with retry) — 优先用户个人推送设置，无个人设置则用全局兜底
+    let globalPushSent = false;
+    for (const uid of targets) {
+      const userSettings = getUserPushSettings(uid);
+      if (userSettings && (userSettings.pushplus_token || userSettings.wecom_secret || userSettings.iyuu_token)) {
+        withRetry(() => sendNotification(title, content, type, userSettings), 'sendNotification-user-' + uid).catch(e => {
+          logger.error('[Notify] sendNotification failed: ' + e.message);
+        });
+      } else if (!globalPushSent) {
+        withRetry(() => sendNotification(title, content, type), 'sendNotification-global').catch(e => {
+          logger.error('[Notify] sendNotification failed: ' + e.message);
+        });
+        globalPushSent = true;
+      }
+    }
     // Browser Web Push (with retry)
     for (const uid of targets) {
-      withRetry(() => sendPushNotification(uid, title, content, link), 'sendPushNotification-' + uid);
+      withRetry(() => sendPushNotification(uid, title, content, link), 'sendPushNotification-' + uid).catch(e => {
+        logger.error('[Notify] sendPushNotification failed: ' + e.message);
+      });
     }
     // SSE: broadcast notification update event for real-time badge refresh
     if (targets.length > 0) {

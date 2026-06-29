@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import db from './db.js';
 import { formatMoney } from './lib/utils.js';
 import { ROLES } from './lib/roles.js';
-import { validateWebhookUrl } from './lib/network.js';
+import { validateWebhookUrlAsync } from './lib/network.js';
 import { existsSync, readFileSync, writeFileSync as wf, mkdirSync as md } from 'fs';
 import { join } from 'path';
 import { fileURLToPath } from 'url';
@@ -29,7 +29,7 @@ function getEncKey(): Buffer {
   const newKey = crypto.randomBytes(32);
   try {
     md(join(BASE_DIR, 'data'), { recursive: true });
-    wf(keyFile, newKey.toString('hex'), 'utf-8');
+    wf(keyFile, newKey.toString('hex'), { encoding: 'utf-8', mode: 0o600 });
     if (process.env.NODE_ENV !== 'production') logger.info('[NOTIFY] Generated new notify encryption key');
   } catch (e) {
     if (process.env.NODE_ENV !== 'production') logger.error('[NOTIFY] Failed to save notify encryption key:', e);
@@ -59,7 +59,11 @@ export function decryptToken(enc: string): string {
     const decipher = crypto.createDecipheriv(ENC_ALGO, key, iv);
     decipher.setAuthTag(tag);
     return decipher.update(data) + decipher.final('utf8');
-  } catch (e) { if (process.env.NODE_ENV !== 'production') logger.warn('[NOTIFY] decryptToken failed:', (e as Error).message); return ''; }
+  } catch (e) {
+    // 解密失败（3段格式但解密出错）
+    logger.warn('[Notify] Token decryption failed, key may have changed');
+    return '';
+  }
 }
 
 // ── 全局设置 ──
@@ -105,40 +109,46 @@ export function getUserPushSettings(userId: number): any {
   return {
     ...row,
     pushplus_token: decryptToken(row.pushplus_token || ''),
-    serverchan_key: decryptToken(row.serverchan_key || ''),
     wecom_secret: decryptToken(row.wecom_secret || ''),
+    iyuu_token: decryptToken(row.iyuu_token || ''),
   };
 }
 
 // ── 渠道发送函数（支持用户设置） ──
 export async function sendPushPlus(title: string, content: string, htmlContent: string, s: any): Promise<void> {
   if (!s.pushplus_token) throw new Error('PushPlus Token 未配置');
-  const res = await fetch('https://www.pushplus.plus/send', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token: s.pushplus_token, title, content: htmlContent || content, template: htmlContent ? 'html' : 'txt' })
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  let res;
+  try {
+    res = await fetch('https://www.pushplus.plus/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: s.pushplus_token, title, content: htmlContent || content, template: htmlContent ? 'html' : 'txt' }),
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
   const data = await res.json() as any;
   if (data.code !== 200) throw new Error('PushPlus: ' + (data.msg || '发送失败'));
 }
 
-export async function sendServerChan(title: string, content: string, s: any): Promise<void> {
-  if (!s.serverchan_key) throw new Error('Server酱 Key 未配置');
-  const res = await fetch('https://sctapi.ftqq.com/' + s.serverchan_key + '.send', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, desp: content })
-  });
-  const data = await res.json() as any;
-  if (data.code !== 0) throw new Error('Server酱: ' + (data.message || '发送失败'));
-}
+
 
 export async function sendWeCom(title: string, content: string, s: any): Promise<void> {
   if (!s.wecom_corpid || !s.wecom_agentid || !s.wecom_secret) throw new Error('企业微信配置不完整');
   const proxyUrl = (s.wecom_proxy_url || 'https://wx.908521.xyz/').replace(/\/?$/, '/');
-  const urlCheck = validateWebhookUrl(proxyUrl);
+  const urlCheck = await validateWebhookUrlAsync(proxyUrl);
   if (!urlCheck.valid) throw new Error('代理URL不安全: ' + urlCheck.error);
-  const tokenRes = await fetch(proxyUrl + 'cgi-bin/gettoken?corpid=' + s.wecom_corpid + '&corpsecret=' + s.wecom_secret);
+  const controller1 = new AbortController();
+  const timeout1 = setTimeout(() => controller1.abort(), 10000);
+  let tokenRes;
+  try {
+    tokenRes = await fetch(proxyUrl + 'cgi-bin/gettoken?corpid=' + s.wecom_corpid + '&corpsecret=' + s.wecom_secret, { signal: controller1.signal });
+  } finally {
+    clearTimeout(timeout1);
+  }
   const tokenData = await tokenRes.json() as any;
   if (!tokenData.access_token) throw new Error('企业微信获取token失败: ' + (tokenData.errmsg || '请检查配置'));
   const accessToken = tokenData.access_token;
@@ -148,11 +158,19 @@ export async function sendWeCom(title: string, content: string, s: any): Promise
     agentid: parseInt(s.wecom_agentid),
     text: { content: title + '\n\n' + content }
   };
-  const sendRes = await fetch(proxyUrl + 'cgi-bin/message/send?access_token=' + accessToken, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(msgBody)
-  });
+  const controller2 = new AbortController();
+  const timeout2 = setTimeout(() => controller2.abort(), 10000);
+  let sendRes;
+  try {
+    sendRes = await fetch(proxyUrl + 'cgi-bin/message/send?access_token=' + accessToken, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(msgBody),
+      signal: controller2.signal
+    });
+  } finally {
+    clearTimeout(timeout2);
+  }
   const sendData = await sendRes.json() as any;
   if (sendData.errcode !== 0) throw new Error('企业微信发送失败: ' + (sendData.errmsg || '错误码' + sendData.errcode));
 }
@@ -160,9 +178,17 @@ export async function sendWeCom(title: string, content: string, s: any): Promise
 export async function sendIyuu(title: string, content: string, s: any): Promise<void> {
   if (!s.iyuu_token) throw new Error('爱语飞飞 Token 未配置');
   const params = new URLSearchParams({ text: title, desp: content });
-  const res = await fetch('https://iyuu.cn/' + s.iyuu_token + '.send?' + params.toString(), {
-    method: 'GET',
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  let res;
+  try {
+    res = await fetch('https://iyuu.cn/' + s.iyuu_token + '.send?' + params.toString(), {
+      method: 'GET',
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
   const text = await res.text();
   try {
     const data = JSON.parse(text);
@@ -182,7 +208,6 @@ export async function sendNotification(title: string, content: string, type?: st
     try { await fn(); results.push(key); } catch (e: any) { errors.push(key + ': ' + e.message); }
   };
   if (s.pushplus_token) await sendOne('PushPlus', () => sendPushPlus(title, content, '', s));
-  if (s.serverchan_key) await sendOne('Server酱', () => sendServerChan(title, content, s));
   if (s.wecom_corpid && s.wecom_agentid && s.wecom_secret) await sendOne('企业微信', () => sendWeCom(title, content, s));
   if (s.iyuu_token) await sendOne('爱语飞飞', () => sendIyuu(title, content, s));
   if (results.length === 0 && errors.length === 0) throw new Error('未配置任何推送渠道');
@@ -198,7 +223,6 @@ export async function sendStoreNotification(storeId: string, title: string, cont
     try { await fn(); results.push(key); } catch (e: any) { errors.push(key + ': ' + e.message); }
   };
   if (s.pushplus_token && (!testChannel || testChannel === 'pushplus')) await sendOne('PushPlus', () => sendPushPlus(title, content, '', s));
-  if (s.serverchan_key && (!testChannel || testChannel === 'serverchan')) await sendOne('Server酱', () => sendServerChan(title, content, s));
   if (s.wecom_corpid && (!testChannel || testChannel === 'wecom')) await sendOne('企业微信', () => sendWeCom(title, content, s));
   if (s.iyuu_token && (!testChannel || testChannel === 'iyuu')) await sendOne('爱语飞飞', () => sendIyuu(title, content, s));
   return { results, errors };

@@ -1,5 +1,5 @@
 import { requireAdmin } from '../middleware/require-role.js';
-﻿import { Router, Response } from 'express';
+import { Router, Response } from 'express';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
@@ -17,7 +17,7 @@ import { isAdmin, isStoreAdmin } from '../lib/roles.js';
 import { AuthRequest } from '../auth.js';
 import { getSettings, sendNotification, buildDailyReport, buildWeeklyReport, buildMonthlyReport, buildReviewReminder, buildAlert } from '../notify.js';
 import { safePath } from '../middleware/store-access.js';
-import { validateWebhookUrl } from '../lib/network.js';
+import { validateWebhookUrlAsync } from '../lib/network.js';
 
 
 // 安全校验：cleanup.json 路径白名单（CRITICAL安全加固）
@@ -540,10 +540,14 @@ router.get('/notification-settings', (req: AuthRequest, res: Response) => {
   if (!isStoreAdmin(req.user.role)) return res.status(403).json({ error: '无权限' });
   try {
     const settings = getSettings();
+    // 返回前先解密 token（数据库存储为密文）
+    if (settings.pushplus_token) settings.pushplus_token = decryptToken(settings.pushplus_token);
+    if (settings.wecom_secret) settings.wecom_secret = decryptToken(settings.wecom_secret);
+    if (settings.iyuu_token) settings.iyuu_token = decryptToken(settings.iyuu_token);
     // 脱敏：只有 ADMIN 才能看到完整密钥
     if (!isAdmin(req.user.role)) {
       const masked = { ...settings };
-      const sensitiveFields = ['pushplus_token', 'serverchan_key', 'wecom_secret'];
+      const sensitiveFields = ['pushplus_token', 'wecom_secret', 'iyuu_token'];
       for (const field of sensitiveFields) {
         if (masked[field]) {
           const val = String(masked[field]);
@@ -556,14 +560,15 @@ router.get('/notification-settings', (req: AuthRequest, res: Response) => {
   } catch (err: any) { res.status(500).json({ error: process.env.NODE_ENV === "production" ? "服务器内部错误" : err.message }); }
 });
 
-router.put('/notification-settings', (req: AuthRequest, res: Response) => {
+router.put('/notification-settings', async (req: AuthRequest, res: Response) => {
   try {
     if (!isStoreAdmin(req.user.role)) return res.status(403).json({ error: '无权限' });
     const s = getSettings();
     // 字段白名单验证，防止写入非法字段
-    const allowedFields = ['pushplus_enabled', 'pushplus_token', 'serverchan_enabled', 'serverchan_key',
-      'wecom_enabled', 'wecom_corp_id', 'wecom_agent_id', 'wecom_secret', 'wecom_user_id', 'wecom_proxy_url',
-      'report_daily', 'report_weekly', 'report_monthly', 'report_review', 'report_warning'];
+    const allowedFields = ['method', 'pushplus_enabled', 'pushplus_token',
+      'wecom_enabled', 'wecom_corpid', 'wecom_agentid', 'wecom_secret', 'wecom_userid', 'wecom_proxy_url',
+      'iyuu_token',
+      'push_daily_report', 'push_weekly_report', 'push_monthly_report', 'push_review_reminder', 'push_alert'];
     const safeBody: any = {};
     for (const key of allowedFields) {
       if (req.body[key] !== undefined) safeBody[key] = req.body[key];
@@ -571,15 +576,16 @@ router.put('/notification-settings', (req: AuthRequest, res: Response) => {
     Object.assign(s, safeBody);
     // SSRF 防护：校验 webhook/proxy URL
     if (s.wecom_proxy_url) {
-      const urlCheck = validateWebhookUrl(s.wecom_proxy_url);
+      const urlCheck = await validateWebhookUrlAsync(s.wecom_proxy_url);
       if (!urlCheck.valid) return res.status(400).json({ error: '代理URL不安全: ' + urlCheck.error });
     }
     const configPath = join(BASE_DIR, 'data', 'notification-settings.json');
     mkdirSync(join(BASE_DIR, 'data'), { recursive: true });
-    db.prepare("UPDATE notification_settings SET method=?, pushplus_token=?, serverchan_key=?, wecom_corpid=?, wecom_agentid=?, wecom_secret=?, wecom_userid=?, wecom_proxy_url=?, push_daily_report=?, push_weekly_report=?, push_monthly_report=?, push_review_reminder=?, push_alert=? WHERE id=1").run(
-      s.method || 'none', s.pushplus_token || '', s.serverchan_key || '',
-      s.wecom_corpid || '', s.wecom_agentid || '', s.wecom_secret || '',
-      s.wecom_userid || '', s.wecom_proxy_url || 'https://wx.908521.xyz/',
+    db.prepare("UPDATE notification_settings SET method=?, pushplus_token=?, wecom_corpid=?, wecom_agentid=?, wecom_secret=?, wecom_userid=?, wecom_proxy_url=?, iyuu_token=?, push_daily_report=?, push_weekly_report=?, push_monthly_report=?, push_review_reminder=?, push_alert=? WHERE id=1").run(
+      s.method || 'none', encryptToken(s.pushplus_token || ''),
+      s.wecom_corpid || '', s.wecom_agentid || '', encryptToken(s.wecom_secret || ''),
+      s.wecom_userid || '', s.wecom_proxy_url !== undefined ? s.wecom_proxy_url : 'https://wx.908521.xyz/',
+      encryptToken(s.iyuu_token || ''),
       s.push_daily_report ? 1 : 0, s.push_weekly_report ? 1 : 0,
       s.push_monthly_report ? 1 : 0, s.push_review_reminder ? 1 : 0,
       s.push_alert ? 1 : 0
@@ -682,16 +688,13 @@ async function fetchWithProxy(url: string, opts?: any): Promise<Response | null>
 }
 
 // Check for updates
-// Check for updates
 router.get('/check-update', async (req: AuthRequest, res: Response) => {
   try {
     if (!isAdmin(req.user.role)) return res.status(403).json({ error: '无权限' });
     
-    // Get current version
     let currentVersion = '1.0.0';
     try { currentVersion = JSON.parse(readFileSync(join(BASE_DIR, 'data', 'version.json'), 'utf-8')).version; } catch {}
     
-    // Get latest version from deploy repo
     const versionUrl = 'https://raw.githubusercontent.com/' + DEPLOY_REPO + '/main/data/version.json';
     const versionRes = await fetchWithProxy(versionUrl);
     if (!versionRes) return res.json({ currentVersion, latestVersion: null, error: '无法连接到更新服务器' });
@@ -699,17 +702,14 @@ router.get('/check-update', async (req: AuthRequest, res: Response) => {
     const latestData = await versionRes.json();
     const latestVersion = latestData.version;
     
-    // Compare versions using utility functions
     const hasUpdate = compareVersions(currentVersion, latestVersion) < 0;
     
-    // Version compatibility check
     const diff = getVersionDiff(currentVersion, latestVersion);
     const isCompatible = diff.totalMinor <= MAX_MINOR_JUMP;
     let upgradePath = [];
     let warning = '';
     
     if (hasUpdate && !isCompatible) {
-      // Generate intermediate upgrade path
       const currentParts = parseVersion(currentVersion);
       const latestParts = parseVersion(latestVersion);
       let stepMajor = currentParts[0];
@@ -954,7 +954,7 @@ router.post('/do-update', async (req: AuthRequest, res: Response) => {
 
 
 // ── 用户个人推送设置（改造版） ──
-import { encryptToken, decryptToken, checkTestRateLimit, isContentTypeAllowed, sendPushPlus, sendServerChan, sendWeCom, sendIyuu } from '../notify.js';
+import { encryptToken, decryptToken, checkTestRateLimit, isContentTypeAllowed, sendPushPlus, sendWeCom, sendIyuu } from '../notify.js';
 import { getVapidPublicKey, saveSubscription, removeSubscription, getUserSubscriptions, sendPushNotification, getJPushConfig, setJPushConfig } from '../push-notify.js';
 import logger from '../logger.js';
 
@@ -965,20 +965,20 @@ router.get('/user-notification-settings', (req: AuthRequest, res: Response) => {
     if (!row) return res.json({});
     const result = { ...row };
     if (result.pushplus_token) result.pushplus_token = decryptToken(result.pushplus_token);
-    if (result.serverchan_key) result.serverchan_key = decryptToken(result.serverchan_key);
     if (result.wecom_secret) result.wecom_secret = decryptToken(result.wecom_secret);
+    if (result.iyuu_token) result.iyuu_token = decryptToken(result.iyuu_token);
     res.json(result);
   } catch (err: any) { res.status(500).json({ error: process.env.NODE_ENV === "production" ? "服务器内部错误" : err.message }); }
 });
 
 // PUT: 保存自己的设置（加密存储，角色校验）
-router.put('/user-notification-settings', (req: AuthRequest, res: Response) => {
+router.put('/user-notification-settings', async (req: AuthRequest, res: Response) => {
   try {
     const role = req.user.role;
-    const { pushplus_token, serverchan_key, wecom_corpid, wecom_agentid, wecom_secret, wecom_userid, wecom_proxy_url, iyuu_token, method } = req.body;
+    const { pushplus_token, wecom_corpid, wecom_agentid, wecom_secret, wecom_userid, wecom_proxy_url, iyuu_token, method } = req.body;
     // SSRF 防护：校验 webhook/proxy URL
     if (wecom_proxy_url) {
-      const urlCheck = validateWebhookUrl(wecom_proxy_url);
+      const urlCheck = await validateWebhookUrlAsync(wecom_proxy_url);
       if (!urlCheck.valid) return res.status(400).json({ error: '代理URL不安全: ' + urlCheck.error });
     }
     if (!isAdmin(role) && (wecom_corpid || wecom_secret)) {
@@ -987,20 +987,20 @@ router.put('/user-notification-settings', (req: AuthRequest, res: Response) => {
     const pushFields = ['push_daily_report','push_weekly_report','push_monthly_report','push_review_reminder','push_alert','push_bookkeeping_notify','push_inventory_notify','push_openclose_notify','push_purchase_notify','push_salary_notify','push_dividend_notify'];
     const pushValues: Record<string, number> = {};
     for (const f of pushFields) { if (req.body[f] !== undefined) pushValues[f] = req.body[f] ? 1 : 0; }
-    const encToken = pushplus_token ? encryptToken(pushplus_token) : '';
-    const encKey = serverchan_key ? encryptToken(serverchan_key) : '';
-    const encSecret = wecom_secret ? encryptToken(wecom_secret) : '';
-    const encIyuu = iyuu_token ? encryptToken(iyuu_token) : '';
+    // 如果传了值就加密，没传(null/undefined)就保留原值（UPDATE 用 COALESCE，INSERT 用空串）
+    const encToken = pushplus_token !== undefined ? (pushplus_token ? encryptToken(pushplus_token) : '') : null;
+    const encSecret = wecom_secret !== undefined ? (wecom_secret ? encryptToken(wecom_secret) : '') : null;
+    const encIyuu = iyuu_token !== undefined ? (iyuu_token ? encryptToken(iyuu_token) : '') : null;
     const existing = db.prepare('SELECT user_id FROM user_notification_settings WHERE user_id = ?').get(req.user.id);
     if (existing) {
-      let sql = 'UPDATE user_notification_settings SET pushplus_token=?, serverchan_key=?, wecom_corpid=?, wecom_agentid=?, wecom_secret=?, wecom_userid=?, wecom_proxy_url=?, iyuu_token=?, method=?, updated_at=?';
-      const params: any[] = [encToken, encKey, wecom_corpid||'', wecom_agentid||'', encSecret, wecom_userid||'', wecom_proxy_url||'', encIyuu, method||'none', new Date().toISOString()];
+      let sql = 'UPDATE user_notification_settings SET pushplus_token=COALESCE(?, pushplus_token), wecom_corpid=?, wecom_agentid=?, wecom_secret=COALESCE(?, wecom_secret), wecom_userid=?, wecom_proxy_url=?, iyuu_token=COALESCE(?, iyuu_token), method=?, updated_at=?';
+      const params: any[] = [encToken, wecom_corpid||'', wecom_agentid||'', encSecret, wecom_userid||'', wecom_proxy_url||'', encIyuu, method||'none', new Date().toISOString()];
       for (const [k, v] of Object.entries(pushValues)) { sql += ', ' + k + '=?'; params.push(v); }
       sql += ' WHERE user_id=?'; params.push(req.user.id);
       db.prepare(sql).run(...params);
     } else {
-      const cols = ['user_id','pushplus_token','serverchan_key','wecom_corpid','wecom_agentid','wecom_secret','wecom_userid','wecom_proxy_url','iyuu_token','method','updated_at'];
-      const vals: any[] = [req.user.id, encToken, encKey, wecom_corpid||'', wecom_agentid||'', encSecret, wecom_userid||'', wecom_proxy_url||'', encIyuu, method||'none', new Date().toISOString()];
+      const cols = ['user_id','pushplus_token','wecom_corpid','wecom_agentid','wecom_secret','wecom_userid','wecom_proxy_url','iyuu_token','method','updated_at'];
+      const vals: any[] = [req.user.id, encToken ?? '', wecom_corpid||'', wecom_agentid||'', encSecret ?? '', wecom_userid||'', wecom_proxy_url||'', encIyuu ?? '', method||'none', new Date().toISOString()];
       for (const [k, v] of Object.entries(pushValues)) { cols.push(k); vals.push(v); }
       db.prepare('INSERT INTO user_notification_settings (' + cols.join(',') + ') VALUES (' + cols.map(()=>'?').join(',') + ')').run(...vals);
     }
@@ -1026,7 +1026,6 @@ router.post('/user-notification-settings/test', async (req: AuthRequest, res: Re
       try { await fn(); results.push(key); } catch (e: any) { errors.push(key + ': ' + e.message); }
     };
     if (channel === 'pushplus' || (!channel && config.pushplus_token)) await sendOne('PushPlus', () => sendPushPlus(title, content, '', config));
-    if (channel === 'serverchan' || (!channel && config.serverchan_key)) await sendOne('Server酱', () => sendServerChan(title, content, config));
     if (channel === 'wecom' || (!channel && config.wecom_corpid)) await sendOne('企业微信', () => sendWeCom(title, content, config));
     if (channel === 'iyuu' || (!channel && config.iyuu_token)) await sendOne('爱语飞飞', () => sendIyuu(title, content, config));
     if (results.length === 0 && errors.length === 0) res.status(400).json({ error: '请先配置至少一个推送渠道' });
@@ -1083,7 +1082,7 @@ router.post('/push/jpush-register', (req: AuthRequest, res: Response) => {
 router.get('/push/jpush-config', requireAdmin, (req: AuthRequest, res: Response) => {
   try {
     const cfg = getJPushConfig();
-    res.json({ appKey: cfg.appKey, masterSecret: cfg.masterSecret ? '***' : '' });
+    res.json({ appKey: cfg?.appKey || '', masterSecret: cfg?.masterSecret ? '***' : '' });
   } catch (err: any) { res.status(500).json({ error: process.env.NODE_ENV === "production" ? "服务器内部错误" : err.message }); }
 });
 

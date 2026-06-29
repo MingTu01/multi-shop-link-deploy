@@ -1,7 +1,8 @@
 import { requireAdmin, requireStoreAdminOrAbove } from '../middleware/require-role.js';
-﻿import { localDate, localDateTime } from '../lib/utils.js';
+import { localDate, localDateTime } from '../lib/utils.js';
 import { Router, Response } from 'express';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import db from '../db.js';
 import { AuthRequest } from '../auth.js';
 import { isAdmin, isStoreAdmin, isManagerOrAbove, entryFilterClause } from '../lib/roles.js';
@@ -10,7 +11,7 @@ import { sanitizeText } from '../sanitize.js';
 import { triggerNotification } from '../notify-trigger.js';
 import { sendStoreNotification, encryptToken, decryptToken } from '../notify.js';
 import { AppError, ErrorCode } from '../error-handler.js';
-import { validateWebhookUrl } from '../lib/network.js';
+import { validateWebhookUrlAsync } from '../lib/network.js';
 import { settingsCache } from '../cache.js';
 import logger from '../logger.js';
 
@@ -163,6 +164,7 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
       db.prepare('DELETE FROM purchase_items WHERE store_id = ?').run(storeId);
       db.prepare('DELETE FROM store_notification_settings WHERE store_id = ?').run(storeId);
       db.prepare("DELETE FROM users WHERE store_id = ? AND role != 'ADMIN'").run(storeId);
+      db.prepare('UPDATE users SET store_id = NULL WHERE store_id = ? AND role = ?').run(storeId, 'ADMIN');
       db.prepare('DELETE FROM stores WHERE id = ?').run(storeId);
     });
     deleteStore(req.params.id);
@@ -212,7 +214,8 @@ router.post('/:storeId/staff', (req: AuthRequest, res: Response) => {
     if (!name || !phone) throw new AppError(ErrorCode.INPUT_REQUIRED, '请填写姓名和手机号', 400);
     const username = phone;
     if (password && password.length < 6) throw new AppError(ErrorCode.INPUT_LENGTH, '密码至少6位', 400);
-    const pw = (password && password.length > 0) ? password : '123456';
+    const pw = (password && password.length > 0) ? password : crypto.randomBytes(6).toString('hex');
+    const generatedPassword = (password && password.length > 0) ? null : pw;
     const passwordHash = bcrypt.hashSync(pw, 10);
     // Determine allowed role based on creator's role
     const creatorRole = req.user.role?.toUpperCase();
@@ -237,7 +240,7 @@ router.post('/:storeId/staff', (req: AuthRequest, res: Response) => {
       detail: '新员工已添加: ' + name + (position ? ' (' + position + ')' : '')
     , operatorName: req.user.name || req.user.username});
 
-    res.json({ id: result.lastInsertRowid, message: '员工添加成功' });
+    res.json({ id: result.lastInsertRowid, message: '员工添加成功', generatedPassword });
   } catch (err: any) { if (err instanceof AppError) throw err; res.status(500).json({ error: process.env.NODE_ENV === "production" ? "服务器内部错误" : err.message }); }
 });
 
@@ -265,6 +268,9 @@ router.put('/:storeId/staff/:id', (req: AuthRequest, res: Response) => {
     if (role !== undefined) {
       const allowedRoles = ['STAFF', 'MANAGER', 'SHAREHOLDER', 'STORE_ADMIN'];
       if (!allowedRoles.includes(role)) throw new AppError(ErrorCode.INPUT_FORMAT, '无效的角色', 400);
+      if (!isStoreAdmin(req.user.role) && role && role !== 'STAFF') {
+        return res.status(403).json({ error: '无权设置该角色' });
+      }
       fields.push('role=?'); vals.push(role);
     }
     if (avatar !== undefined) { fields.push('avatar=?'); vals.push(avatar); }
@@ -292,7 +298,7 @@ router.put('/:storeId/staff/:id', (req: AuthRequest, res: Response) => {
 router.delete('/:storeId/staff/:id', (req: AuthRequest, res: Response) => {
   try {
     if (!isStoreAdmin(req.user.role)) throw new AppError(ErrorCode.PERM_DENIED, '无权限', 403);
-    db.prepare('DELETE FROM users WHERE id = ? AND store_id = ?').run(req.params.id, req.params.storeId);
+    db.prepare('DELETE FROM users WHERE id = ? AND store_id = ? AND role != ?').run(req.params.id, req.params.storeId, 'ADMIN');
     opLog(req.user.id, req.params.storeId, '删除员工', '删除员工 #' + req.params.id);
     res.json({ message: '员工已删除' });
   } catch (err: any) { if (err instanceof AppError) throw err; res.status(500).json({ error: process.env.NODE_ENV === "production" ? "服务器内部错误" : err.message }); }
@@ -341,13 +347,12 @@ router.get('/:storeId/notification-settings', (req: AuthRequest, res: Response) 
     if (settings) {
       const s = settings as any;
       if (s.pushplus_token) s.pushplus_token = decryptToken(s.pushplus_token);
-      if (s.serverchan_key) s.serverchan_key = decryptToken(s.serverchan_key);
       if (s.wecom_secret) s.wecom_secret = decryptToken(s.wecom_secret);
     }
         // 脱敏：只有 ADMIN 才能看到完整密钥
     if (!isAdmin(req.user.role)) {
       const masked = { ...settings };
-      const sensitiveFields = ['pushplus_token', 'serverchan_key', 'wecom_secret'];
+      const sensitiveFields = ['pushplus_token', 'wecom_secret'];
       for (const field of sensitiveFields) {
         if (masked[field]) {
           const val = String(masked[field]);
@@ -361,14 +366,14 @@ router.get('/:storeId/notification-settings', (req: AuthRequest, res: Response) 
 });
 
 // 店铺通知设置 - PUT
-router.put('/:storeId/notification-settings', (req: AuthRequest, res: Response) => {
+router.put('/:storeId/notification-settings', async (req: AuthRequest, res: Response) => {
   try {
     if (!isStoreAdmin(req.user.role)) throw new AppError(ErrorCode.PERM_DENIED, '无权限', 403);
     const storeId = req.params.storeId;
     const s = req.body;
     // SSRF protection: validate wecom_proxy_url
     if (s.wecom_proxy_url) {
-      const urlCheck = validateWebhookUrl(s.wecom_proxy_url);
+      const urlCheck = await validateWebhookUrlAsync(s.wecom_proxy_url);
       if (!urlCheck.valid) throw new AppError(ErrorCode.INPUT_FORMAT, urlCheck.error || 'URL 格式不正确', 400);
     }
     const exists = db.prepare('SELECT id FROM store_notification_settings WHERE store_id = ?').get(storeId);
@@ -377,14 +382,14 @@ router.put('/:storeId/notification-settings', (req: AuthRequest, res: Response) 
     }
     db.prepare(`UPDATE store_notification_settings SET
       method=COALESCE(?, method), pushplus_token=COALESCE(?, pushplus_token),
-      serverchan_key=COALESCE(?, serverchan_key), wecom_corpid=COALESCE(?, wecom_corpid),
+      wecom_corpid=COALESCE(?, wecom_corpid),
       wecom_agentid=COALESCE(?, wecom_agentid), wecom_secret=COALESCE(?, wecom_secret),
       wecom_userid=COALESCE(?, wecom_userid), wecom_proxy_url=COALESCE(?, wecom_proxy_url),
       push_daily_report=COALESCE(?, push_daily_report), push_weekly_report=COALESCE(?, push_weekly_report),
       push_monthly_report=COALESCE(?, push_monthly_report), push_review_reminder=COALESCE(?, push_review_reminder),
       push_alert=COALESCE(?, push_alert), updated_at=datetime('now','localtime')
       WHERE store_id=?`).run(
-      s.method, encryptToken(s.pushplus_token || ''), encryptToken(s.serverchan_key || ''), s.wecom_corpid, s.wecom_agentid,
+      s.method, encryptToken(s.pushplus_token || ''), s.wecom_corpid, s.wecom_agentid,
       encryptToken(s.wecom_secret || ''), s.wecom_userid, s.wecom_proxy_url,
       s.push_daily_report, s.push_weekly_report, s.push_monthly_report,
       s.push_review_reminder, s.push_alert, storeId
@@ -402,7 +407,6 @@ router.post('/:storeId/notification-settings/test', (req: AuthRequest, res: Resp
     const dbSettings = db.prepare('SELECT * FROM store_notification_settings WHERE store_id = ?').get(storeId) as any;
     if (dbSettings) {
       if (dbSettings.pushplus_token) dbSettings.pushplus_token = decryptToken(dbSettings.pushplus_token);
-      if (dbSettings.serverchan_key) dbSettings.serverchan_key = decryptToken(dbSettings.serverchan_key);
       if (dbSettings.wecom_secret) dbSettings.wecom_secret = decryptToken(dbSettings.wecom_secret);
     }
     const bodyConfig = req.body && req.body.config ? req.body.config : {};
